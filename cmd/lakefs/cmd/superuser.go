@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/treeverse/lakefs/pkg/auth"
 	"github.com/treeverse/lakefs/pkg/auth/model"
+	"github.com/treeverse/lakefs/pkg/auth/multiuser"
 	"github.com/treeverse/lakefs/pkg/auth/setup"
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/kv"
@@ -70,7 +71,9 @@ If the wrong user or credentials were chosen it is possible to delete the user a
 		addToAdmins := !authUIConfig.IsAuthBasic()
 		authMetadataManager := auth.NewKVMetadataManager(version.Version, baseConfig.Installation.FixedID, baseConfig.Database.Type, kvStore)
 		metadata := initStatsMetadata(ctx, logger, authMetadataManager, cfg)
-		authService := auth.NewAuthService(ctx, cfg, logger, kvStore, authMetadataManager)
+		// Modified by KAOS: multiuser.NewAuthService adds the in-process multi-user auth mode
+		// (auth.ui_config.rbac "internal", PRD novelcore/kaos#1217 F-02) and otherwise calls auth.NewAuthService.
+		authService := multiuser.NewAuthService(ctx, cfg, logger, kvStore, authMetadataManager)
 
 		credentials, err := setup.AddAdminUser(ctx, authService, &model.SuperuserConfiguration{
 			User: model.User{

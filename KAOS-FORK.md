@@ -59,3 +59,16 @@ pushes an image to the platform OCI registry:
 - any other merge publishes `kaos-lake:<VERSION>-dev-<date>-<time>-<sha7>`.
 
 To release, open a pull request that bumps `kaos/VERSION`.
+
+## Changes from lakeFS v1.86.0
+
+- **No phone-home by default.** `stats.enabled`, `security.check_latest_version` are `false`
+  and `security.audit_check_url` is empty (the audit check is off). Each can be set again.
+- **Multi-user auth mode** (PRD novelcore/kaos#1217 F-02). `auth.ui_config.rbac: internal` with no
+  `auth.api.endpoint` runs the v1.86 key-value auth store (`contrib/auth/acl`) inside the server, in
+  lakeFS's own database: users, groups and policies through the standard auth API and UI, evaluated
+  by the unchanged core. Code: `pkg/auth/multiuser`. Every other `rbac` value behaves as upstream.
+  - Setup creates upstream's RBAC base groups (Admins, SuperUsers, Developers, Viewers) and policies.
+  - A server switched from `rbac: none` migrates on its first start: the basic-mode admin keeps its
+    name and key pair and joins Admins. Basic-mode records are not changed, so switching back to
+    `none` keeps working with the admin key; users created in multi-user mode exist only there.
