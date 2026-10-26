@@ -123,7 +123,10 @@ func setBaseDefaults(cfgType string) {
 	viper.SetDefault("blockstore.azure.pre_signed_expiry", DefaultBlockstoreAzurePreSignedExpiry)
 	viper.SetDefault("blockstore.azure.disable_pre_signed_ui", DefaultBlockstoreAzureDisablePreSignedUI)
 
-	viper.SetDefault("stats.enabled", true)
+	// Modified by KAOS: kaos-lake is hosted for clients and frozen at v1.86.0, so nothing phones
+	// home by default: no usage stats (which also carry setup e-mails), advisory check or upgrade
+	// recommendation (upstream is BUSL-1.1 from v1.87.0). All remain configurable.
+	viper.SetDefault("stats.enabled", false)
 	viper.SetDefault("stats.address", "https://stats.lakefs.io")
 	viper.SetDefault("stats.flush_interval", 30*time.Second)
 	viper.SetDefault("stats.flush_size", 100)
@@ -131,8 +134,8 @@ func setBaseDefaults(cfgType string) {
 	viper.SetDefault("email_subscription.enabled", true)
 
 	viper.SetDefault("security.audit_check_interval", 24*time.Hour)
-	viper.SetDefault("security.audit_check_url", "https://audit.lakefs.io/audit")
-	viper.SetDefault("security.check_latest_version", true)
+	viper.SetDefault("security.audit_check_url", "") // empty = audit check off (cmd/lakefs/cmd/run.go)
+	viper.SetDefault("security.check_latest_version", false)
 	viper.SetDefault("security.check_latest_version_cache", time.Hour)
 
 	viper.SetDefault("ui.enabled", true)
