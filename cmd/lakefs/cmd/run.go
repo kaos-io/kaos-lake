@@ -22,6 +22,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/api"
 	"github.com/treeverse/lakefs/pkg/auth"
 	"github.com/treeverse/lakefs/pkg/auth/multiuser"
+	"github.com/treeverse/lakefs/pkg/auth/rekey"
 	"github.com/treeverse/lakefs/pkg/authentication"
 	"github.com/treeverse/lakefs/pkg/block"
 	blockfactory "github.com/treeverse/lakefs/pkg/block/factory"
@@ -104,6 +105,14 @@ var runCmd = &cobra.Command{
 		installationID := baseCfg.Installation.FixedID
 		authMetadataManager := auth.NewKVMetadataManager(version.Version, installationID, baseCfg.Database.Type, kvStore)
 		idGen := &actions.DecreasingIDGenerator{}
+
+		// Modified by KAOS: move stored secrets off auth.encrypt.previous_secret_key before any
+		// auth service reads them (PRD novelcore/kaos#1217 T-07).
+		if n, err := rekey.FromConfig(ctx, cfg, kvStore); err != nil {
+			logger.WithError(err).Fatal("Failed to re-encrypt stored secrets with auth.encrypt.secret_key")
+		} else if n > 0 {
+			logger.WithField("count", n).Info("Re-encrypted stored secrets with auth.encrypt.secret_key")
+		}
 
 		// Modified by KAOS: multiuser.NewAuthService adds the in-process multi-user auth mode
 		// (auth.ui_config.rbac "internal", PRD novelcore/kaos#1217 F-02) and otherwise calls auth.NewAuthService.

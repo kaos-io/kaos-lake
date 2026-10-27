@@ -679,6 +679,9 @@ type BaseAuth struct {
 	} `mapstructure:"cache"`
 	Encrypt struct {
 		SecretKey SecureString `mapstructure:"secret_key" validate:"required"`
+		// Modified by KAOS: secrets stored under this key are re-encrypted with secret_key on start
+		// (pkg/auth/rekey, PRD novelcore/kaos#1217 T-07).
+		PreviousSecretKey SecureString `mapstructure:"previous_secret_key"`
 	} `mapstructure:"encrypt"`
 	API struct {
 		// Endpoint for authorization operations
