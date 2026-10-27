@@ -16,6 +16,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/api/apiutil"
 	"github.com/treeverse/lakefs/pkg/api/params"
 	"github.com/treeverse/lakefs/pkg/auth"
+	"github.com/treeverse/lakefs/pkg/auth/tokenid"
 	"github.com/treeverse/lakefs/pkg/authentication"
 	"github.com/treeverse/lakefs/pkg/block"
 	"github.com/treeverse/lakefs/pkg/catalog"
@@ -107,6 +108,13 @@ func Serve(
 	r.Mount("/openapi.json", http.HandlerFunc(swaggerSpecHandler))
 	r.Mount(apiutil.BaseURL, http.HandlerFunc(InvalidAPIEndpointHandler))
 	r.Mount("/logout", NewLogoutHandler(sessionStore, logger, cfg.AuthConfig().GetBaseAuthConfig().LogoutRedirectURL))
+	// Modified by KAOS: browser sign-in with the identity provider (pkg/auth/tokenid, PRD
+	// novelcore/kaos#1217 F-04).
+	if bl := tokenid.NewBrowserLogin(cfg.GetBaseConfig().KAOS.BrowserLogin, sessionStore, authService.SecretStore().SharedSecret(),
+		cfg.AuthConfig().GetBaseAuthConfig().LoginDuration, logger); bl != nil {
+		r.Get("/oidc/login", bl.Login)
+		r.Get("/oidc/callback", bl.Callback)
+	}
 
 	// Configuration flag to control if the embedded UI is served
 	// or not and assign the correct handler for each case.

@@ -95,3 +95,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
   cannot be verified, or maps to no group, is denied; nothing falls back to another identity.
   lakeFS's own login tokens are unchanged. Code: `pkg/auth/tokenid`; hook in
   `pkg/api/auth_middleware.go`.
+- **Browser sign-in** (PRD novelcore/kaos#1217 F-04). With token identity on, `kaos.browser_login`
+  (`client_id`, `client_secret`, `redirect_url`, `scopes`) adds `/oidc/login` and `/oidc/callback`:
+  authorization code with PKCE (S256) and a single-use state cookie, then the ID token (audienced
+  to that client, carrying the email and groups claims) goes through the same verification and
+  group mapping as a bearer token, and the same lakeFS session `/auth/login` creates is started.
+  Set `auth.ui_config.fallback_login_url: /oidc/login` for the UI's sign-in button. A person with
+  no mapped role gets a 403 page saying so; nothing falls back to the admin key.

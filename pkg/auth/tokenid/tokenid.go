@@ -84,6 +84,12 @@ func (id *Identity) Owns(token string) bool {
 // Resolve verifies token and returns its user, created on first use, with its groups set from
 // the token. Every error denies the request.
 func (id *Identity) Resolve(ctx context.Context, token string) (*model.User, error) {
+	return id.resolve(ctx, token, "")
+}
+
+// resolve is Resolve, also accepting audience extraAudience: the browser login's own client,
+// whose ID token it presents.
+func (id *Identity) resolve(ctx context.Context, token, extraAudience string) (*model.User, error) {
 	now := id.now()
 	id.mu.Lock()
 	c, ok := id.cache[token]
@@ -92,7 +98,7 @@ func (id *Identity) Resolve(ctx context.Context, token string) (*model.User, err
 		return c.user, nil
 	}
 
-	claims, err := id.verify(ctx, token)
+	claims, err := id.verify(ctx, token, extraAudience)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w: %w", auth.ErrAuthenticatingRequest, ErrDenied, err)
 	}
@@ -125,7 +131,7 @@ func (id *Identity) Resolve(ctx context.Context, token string) (*model.User, err
 	return user, nil
 }
 
-func (id *Identity) verify(ctx context.Context, token string) (jwt.MapClaims, error) {
+func (id *Identity) verify(ctx context.Context, token, extraAudience string) (jwt.MapClaims, error) {
 	claims := jwt.MapClaims{}
 	keyFn := func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
@@ -141,7 +147,9 @@ func (id *Identity) verify(ctx context.Context, token string) (jwt.MapClaims, er
 		return nil, err
 	}
 	aud, err := claims.GetAudience()
-	if err != nil || !slices.ContainsFunc(aud, func(a string) bool { return slices.Contains(id.cfg.Audiences, a) }) {
+	if err != nil || !slices.ContainsFunc(aud, func(a string) bool {
+		return slices.Contains(id.cfg.Audiences, a) || (extraAudience != "" && a == extraAudience)
+	}) {
 		return nil, fmt.Errorf("audience %v not accepted", aud)
 	}
 	return claims, nil

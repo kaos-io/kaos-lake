@@ -27,6 +27,23 @@ type keySet struct {
 	mu      sync.Mutex
 	keys    map[string]*rsa.PublicKey
 	fetched time.Time
+	// Endpoints from the last successful discovery, for the browser login (F-04).
+	authorizationEndpoint, tokenEndpoint string
+}
+
+// endpoints returns the issuer's authorization and token endpoints, running discovery if no
+// earlier fetch has.
+func (s *keySet) endpoints(ctx context.Context) (authorization, token string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tokenEndpoint == "" {
+		keys, err := s.fetch(ctx)
+		if err != nil {
+			return "", "", fmt.Errorf("discover %s: %w", s.issuer, err)
+		}
+		s.keys, s.fetched = keys, time.Now()
+	}
+	return s.authorizationEndpoint, s.tokenEndpoint, nil
 }
 
 func newKeySet(issuer string, client *http.Client) *keySet {
@@ -57,8 +74,10 @@ func (s *keySet) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 
 func (s *keySet) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error) {
 	var discovery struct {
-		Issuer  string `json:"issuer"`
-		JWKSURI string `json:"jwks_uri"`
+		Issuer                string `json:"issuer"`
+		JWKSURI               string `json:"jwks_uri"`
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
 	}
 	if err := s.getJSON(ctx, s.issuer+"/.well-known/openid-configuration", &discovery); err != nil {
 		return nil, err
@@ -66,6 +85,7 @@ func (s *keySet) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error) {
 	if strings.TrimSuffix(discovery.Issuer, "/") != s.issuer || discovery.JWKSURI == "" {
 		return nil, fmt.Errorf("discovery document names issuer %q, jwks_uri %q", discovery.Issuer, discovery.JWKSURI)
 	}
+	s.authorizationEndpoint, s.tokenEndpoint = discovery.AuthorizationEndpoint, discovery.TokenEndpoint
 	var jwks struct {
 		Keys []struct {
 			Kty string `json:"kty"`
