@@ -24,6 +24,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/auth/declared"
 	"github.com/treeverse/lakefs/pkg/auth/multiuser"
 	"github.com/treeverse/lakefs/pkg/auth/rekey"
+	"github.com/treeverse/lakefs/pkg/auth/tokenid"
 	"github.com/treeverse/lakefs/pkg/authentication"
 	"github.com/treeverse/lakefs/pkg/block"
 	blockfactory "github.com/treeverse/lakefs/pkg/block/factory"
@@ -126,6 +127,15 @@ var runCmd = &cobra.Command{
 				logger.Fatal(`kaos.app_users.path needs auth.ui_config.rbac "internal"`)
 			}
 			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, logger)
+		}
+		// Modified by KAOS: identity-provider tokens as bearer tokens (F-03).
+		if tokenIdentity := baseCfg.KAOS.TokenIdentity; tokenIdentity.Issuer != "" {
+			if !multiuser.Enabled(cfg) {
+				logger.Fatal(`kaos.token_identity needs auth.ui_config.rbac "internal"`)
+			}
+			if err := tokenid.Configure(tokenIdentity, authService); err != nil {
+				logger.WithError(err).Fatal("kaos.token_identity")
+			}
 		}
 
 		authenticationService, err := authentication.NewAuthenticationService(ctx, cfg, logger)

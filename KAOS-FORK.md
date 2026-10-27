@@ -85,3 +85,13 @@ To release, open a pull request that bumps `kaos/VERSION`.
   key, undeclared `kaos-app-*` users are deleted with their keys, and other users are never
   touched. Developers also get `KAOSRepositoryCreate` (create repositories; deleting stays with
   Admins). An invalid file changes nothing. Code: `pkg/auth/declared`.
+- **Token identity** (PRD novelcore/kaos#1217 F-03). In multi-user mode, `kaos.token_identity`
+  (`issuer`, `audiences`, `groups_claim` default `groups`, and `groups`: a list of `claim` →
+  `group`) accepts that identity provider's access tokens as `Authorization: Bearer`. The token
+  is verified against the issuer's published keys (OIDC discovery, RS256 only, issuer, audience,
+  expiry required). The caller is the lakeFS user named by the token's `email` claim (it must
+  contain `@`, so a token can never act as a platform or app user), created on first use, and its
+  groups are set to exactly the mapped values of the groups claim on every call. A token that
+  cannot be verified, or maps to no group, is denied; nothing falls back to another identity.
+  lakeFS's own login tokens are unchanged. Code: `pkg/auth/tokenid`; hook in
+  `pkg/api/auth_middleware.go`.
