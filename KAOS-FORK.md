@@ -72,3 +72,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
   - A server switched from `rbac: none` migrates on its first start: the basic-mode admin keeps its
     name and key pair and joins Admins. Basic-mode records are not changed, so switching back to
     `none` keeps working with the admin key; users created in multi-user mode exist only there.
+- **Encryption key rotation** (PRD novelcore/kaos#1217 T-07). `auth.encrypt.previous_secret_key`
+  (`LAKEFS_AUTH_ENCRYPT_PREVIOUS_SECRET_KEY`) names the key secrets were stored under before. On
+  start, `lakefs run` re-encrypts with `auth.encrypt.secret_key` every stored access-key secret that
+  only the previous key opens, in both auth modes, then serves. Access keys do not change. A secret
+  neither key opens stops the start. Code: `pkg/auth/rekey`. Used to move existing stacks off the
+  lakeFS Helm chart's built-in default key.
