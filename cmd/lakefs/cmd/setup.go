@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/treeverse/lakefs/pkg/auth"
 	"github.com/treeverse/lakefs/pkg/auth/model"
+	"github.com/treeverse/lakefs/pkg/auth/multiuser"
 	"github.com/treeverse/lakefs/pkg/auth/setup"
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/kv"
@@ -79,7 +80,9 @@ var setupCmd = &cobra.Command{
 
 		logger := logging.FromContext(ctx)
 		authMetadataManager := auth.NewKVMetadataManager(version.Version, baseConfig.Installation.FixedID, baseConfig.Database.Type, kvStore)
-		authService = auth.NewAuthService(ctx, cfg, logger, kvStore, authMetadataManager)
+		// Modified by KAOS: multiuser.NewAuthService adds the in-process multi-user auth mode
+		// (auth.ui_config.rbac "internal", PRD novelcore/kaos#1217 F-02) and otherwise calls auth.NewAuthService.
+		authService = multiuser.NewAuthService(ctx, cfg, logger, kvStore, authMetadataManager)
 		metadata := initStatsMetadata(ctx, logger, authMetadataManager, cfg)
 
 		credentials, err := setupLakeFS(ctx, cfg, authMetadataManager, authService, userName, accessKeyID, secretAccessKey, noCheck)
