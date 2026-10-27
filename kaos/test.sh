@@ -6,4 +6,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 sh kaos/check-lineage_test.sh
-go test -short ./pkg/auth/... ./contrib/auth/... ./pkg/api/... ./pkg/gateway/... ./pkg/config/...
+# The release workflow runs this in a Kubernetes pod. Upstream TestInstrumentation expects
+# is_k8s=false unless the test itself sets KUBERNETES_SERVICE_HOST, so the pod's value is unset.
+env -u KUBERNETES_SERVICE_HOST \
+  go test -short ./pkg/auth/... ./contrib/auth/... ./pkg/api/... ./pkg/gateway/... ./pkg/config/...
