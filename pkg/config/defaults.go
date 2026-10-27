@@ -136,6 +136,8 @@ func setBaseDefaults(cfgType string) {
 	viper.SetDefault("security.audit_check_interval", 24*time.Hour)
 	viper.SetDefault("security.audit_check_url", "") // empty = audit check off (cmd/lakefs/cmd/run.go)
 	viper.SetDefault("security.check_latest_version", false)
+	// Modified by KAOS: how often declared app users are reapplied (pkg/auth/declared).
+	viper.SetDefault("kaos.app_users.interval", 30*time.Second)
 	viper.SetDefault("security.check_latest_version_cache", time.Hour)
 
 	viper.SetDefault("ui.enabled", true)
