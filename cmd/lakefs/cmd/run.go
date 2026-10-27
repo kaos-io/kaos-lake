@@ -198,7 +198,9 @@ var runCmd = &cobra.Command{
 
 		auditChecker := version.NewDefaultAuditChecker(baseCfg.Security.AuditCheckURL, metadata.InstallationID, version.NewDefaultVersionSource(baseCfg.Security.CheckLatestVersionCache))
 		defer auditChecker.Close()
-		if !version.IsVersionUnreleased() {
+		// Modified by KAOS: an empty security.audit_check_url (the kaos-lake default) turns the
+		// periodic audit check off; upstream always ran it.
+		if !version.IsVersionUnreleased() && baseCfg.Security.AuditCheckURL != "" {
 			auditChecker.StartPeriodicCheck(ctx, baseCfg.Security.AuditCheckInterval, logger)
 		}
 

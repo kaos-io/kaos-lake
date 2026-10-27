@@ -1,3 +1,5 @@
+# Modified by KAOS: webui/src/ is no longer ignored, because kaos/Dockerfile builds the web UI
+# inside the image build (PRD novelcore/kaos#1217). Upstream builds it outside Docker.
 .git/
 .github/
 .gitignore
@@ -19,4 +21,3 @@ target/
 test/
 venv/
 webui/node_modules/
-webui/src/

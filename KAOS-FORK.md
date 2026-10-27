@@ -36,3 +36,26 @@ Treeverse.
 In accordance with Apache-2.0 Section 4(b), every file modified by KAOS carries
 a prominent notice stating that it was changed. KAOS changes are also recorded
 in the Git history of this repository after the upstream `v1.86.0` commit.
+
+The notice is a comment containing the exact text `Modified by KAOS` followed by a short
+description of the change. `kaos/check-lineage.sh` enforces it, together with the rules above.
+
+## Distribution: kaos-lake
+
+The KAOS build of this repository is published as `kaos-lake` (PRD novelcore/kaos#1217).
+"lakeFS" identifies the origin of the code only.
+
+- `kaos/Dockerfile` builds the image, web UI included, with the same runtime layout as upstream.
+- `kaos/VERSION` holds the release version (`1.86.0-kaos.N`).
+- `kaos/check-lineage.sh` fails when the branch could contain upstream code after v1.86.0, when
+  `LICENSE` or `NOTICE` changed, or when a modified upstream file lacks the notice.
+- `kaos/test.sh` is the test gate.
+
+Releases run on Argo Workflows (WorkflowTemplate `kaos-lake-build` in novelcore/kaos), never on
+GitHub Actions. Every pull request merged into `kaos/1.86` runs the lineage check and tests, then
+pushes an image to the platform OCI registry:
+
+- a merge that changes `kaos/VERSION` publishes `kaos-lake:<VERSION>`;
+- any other merge publishes `kaos-lake:<VERSION>-dev-<date>-<time>-<sha7>`.
+
+To release, open a pull request that bumps `kaos/VERSION`.
