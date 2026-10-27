@@ -78,3 +78,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
   only the previous key opens, in both auth modes, then serves. Access keys do not change. A secret
   neither key opens stops the start. Code: `pkg/auth/rekey`. Used to move existing stacks off the
   lakeFS Helm chart's built-in default key.
+- **Declared app users** (PRD novelcore/kaos#1217 F-06). In multi-user mode, `kaos.app_users.path`
+  names a directory with one JSON file per ML app (`user`, `access_key_id`, `secret_access_key`),
+  normally a mounted Secret. On start and every `kaos.app_users.interval` (default 30s) the server
+  makes the store match it: each `kaos-app-*` user exists in Developers with exactly its declared
+  key, undeclared `kaos-app-*` users are deleted with their keys, and other users are never
+  touched. Developers also get `KAOSRepositoryCreate` (create repositories; deleting stays with
+  Admins). An invalid file changes nothing. Code: `pkg/auth/declared`.

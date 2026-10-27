@@ -21,6 +21,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/actions"
 	"github.com/treeverse/lakefs/pkg/api"
 	"github.com/treeverse/lakefs/pkg/auth"
+	"github.com/treeverse/lakefs/pkg/auth/declared"
 	"github.com/treeverse/lakefs/pkg/auth/multiuser"
 	"github.com/treeverse/lakefs/pkg/auth/rekey"
 	"github.com/treeverse/lakefs/pkg/authentication"
@@ -117,6 +118,15 @@ var runCmd = &cobra.Command{
 		// Modified by KAOS: multiuser.NewAuthService adds the in-process multi-user auth mode
 		// (auth.ui_config.rbac "internal", PRD novelcore/kaos#1217 F-02) and otherwise calls auth.NewAuthService.
 		authService := multiuser.NewAuthService(ctx, cfg, logger, kvStore, authMetadataManager)
+
+		// Modified by KAOS: keep declared ML app users and their keys applied (PRD
+		// novelcore/kaos#1217 F-06). Only the multi-user store has users to declare.
+		if appUsers := baseCfg.KAOS.AppUsers; appUsers.Path != "" {
+			if !multiuser.Enabled(cfg) {
+				logger.Fatal(`kaos.app_users.path needs auth.ui_config.rbac "internal"`)
+			}
+			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, logger)
+		}
 
 		authenticationService, err := authentication.NewAuthenticationService(ctx, cfg, logger)
 		if err != nil {

@@ -561,6 +561,15 @@ type BaseConfig struct {
 		EnabledDeprecated bool          `mapstructure:"enabled"`
 		FlushInterval     time.Duration `mapstructure:"flush_interval"`
 	} `mapstructure:"usage_report"`
+	// Modified by KAOS: kaos-lake settings (PRD novelcore/kaos#1217).
+	KAOS struct {
+		// AppUsers declares one user and access key per ML app, one JSON file each in Path
+		// (pkg/auth/declared, F-06). Empty Path: off. Needs auth.ui_config.rbac "internal".
+		AppUsers struct {
+			Path     string        `mapstructure:"path"`
+			Interval time.Duration `mapstructure:"interval"`
+		} `mapstructure:"app_users"`
+	} `mapstructure:"kaos"`
 }
 
 func (c *BaseConfig) GetVersionContext() string {
