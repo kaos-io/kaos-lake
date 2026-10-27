@@ -12,6 +12,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/api/apigen"
 	"github.com/treeverse/lakefs/pkg/auth"
 	"github.com/treeverse/lakefs/pkg/auth/model"
+	"github.com/treeverse/lakefs/pkg/auth/tokenid"
 	"github.com/treeverse/lakefs/pkg/logging"
 )
 
@@ -113,7 +114,13 @@ func checkSecurityRequirements(r *http.Request,
 				if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 					continue
 				}
-				user, err = auth.UserByToken(ctx, authService, parts[1])
+				// Modified by KAOS: a token from the configured identity provider is the
+				// caller's own identity (pkg/auth/tokenid, PRD novelcore/kaos#1217 F-03).
+				if id := tokenid.Active(); id != nil && id.Owns(parts[1]) {
+					user, err = id.Resolve(ctx, parts[1])
+				} else {
+					user, err = auth.UserByToken(ctx, authService, parts[1])
+				}
 			case "basic_auth":
 				accessKey, secretKey, ok := r.BasicAuth()
 				if !ok {

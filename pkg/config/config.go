@@ -569,7 +569,37 @@ type BaseConfig struct {
 			Path     string        `mapstructure:"path"`
 			Interval time.Duration `mapstructure:"interval"`
 		} `mapstructure:"app_users"`
+		// TokenIdentity accepts the identity provider's own tokens as bearer tokens
+		// (pkg/auth/tokenid, F-03). Empty Issuer: off. Needs auth.ui_config.rbac "internal".
+		TokenIdentity KAOSTokenIdentity `mapstructure:"token_identity"`
+		// BrowserLogin signs people into the UI with the same identity provider (F-04). Empty
+		// ClientID: off. Needs TokenIdentity.
+		BrowserLogin KAOSBrowserLogin `mapstructure:"browser_login"`
 	} `mapstructure:"kaos"`
+}
+
+// KAOSTokenIdentity configures pkg/auth/tokenid. Modified by KAOS (PRD novelcore/kaos#1217 F-03).
+type KAOSTokenIdentity struct {
+	Issuer    string   `mapstructure:"issuer"`
+	Audiences []string `mapstructure:"audiences"`
+	// GroupsClaim names the token claim listing the caller's groups (default "groups").
+	GroupsClaim string `mapstructure:"groups_claim"`
+	// Groups maps a value of the groups claim to a lakeFS group. A caller with no mapped value
+	// is denied.
+	Groups []struct {
+		Claim string `mapstructure:"claim"`
+		Group string `mapstructure:"group"`
+	} `mapstructure:"groups"`
+}
+
+// KAOSBrowserLogin configures the browser login of pkg/auth/tokenid. Modified by KAOS (PRD
+// novelcore/kaos#1217 F-04).
+type KAOSBrowserLogin struct {
+	ClientID     string       `mapstructure:"client_id"`
+	ClientSecret SecureString `mapstructure:"client_secret"`
+	// RedirectURL is this server's /oidc/callback as the browser reaches it.
+	RedirectURL string   `mapstructure:"redirect_url"`
+	Scopes      []string `mapstructure:"scopes"`
 }
 
 func (c *BaseConfig) GetVersionContext() string {
