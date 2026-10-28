@@ -41,15 +41,23 @@ func podToken(t *testing.T, is *issuer, ns, sa string, edit func(jwt.MapClaims))
 	})
 }
 
+// newWorkload declares yolo in vision-ml, mlci in its own namespace, and old (from before
+// namespaces were declared) in none; all three users exist.
 func newWorkload(t *testing.T, is *issuer) (*Workload, auth.Service) {
 	t.Helper()
 	ctx := t.Context()
 	svc := acl.NewAuthService(kvtest.GetStore(ctx, t), crypt.NewSecretStore([]byte("k")), authparams.ServiceCache{})
-	_, err := svc.CreateUser(ctx, &model.User{Username: "kaos-app-yolo", CreatedAt: time.Now()})
-	require.NoError(t, err)
-	w, err := NewWorkload(config.KAOSWorkloadIdentity{
-		Audience: workloadAudience, Issuer: is.URL, Namespaces: []string{"vision-ml"}, KeyTTL: time.Hour,
-	}, svc)
+	apps := &declared.Loaded{}
+	apps.Set([]declared.App{
+		{User: "kaos-app-yolo", Namespace: "vision-ml"},
+		{User: "kaos-app-mlci", Namespace: "vision-mlci--train"},
+		{User: "kaos-app-old"},
+	})
+	for _, u := range []string{"kaos-app-yolo", "kaos-app-mlci", "kaos-app-old"} {
+		_, err := svc.CreateUser(ctx, &model.User{Username: u, CreatedAt: time.Now()})
+		require.NoError(t, err)
+	}
+	w, err := NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience, Issuer: is.URL, KeyTTL: time.Hour}, svc, apps)
 	require.NoError(t, err)
 	w.keys.minRefresh = 0
 	return w, svc
@@ -64,9 +72,18 @@ func TestWorkload_Resolve(t *testing.T) {
 	u, err := w.Resolve(t.Context(), tok)
 	require.NoError(t, err)
 	require.Equal(t, "kaos-app-yolo", u.Username)
+	u, err = w.Resolve(t.Context(), podToken(t, is, "vision-mlci--train", "mlci-workflow", nil))
+	require.NoError(t, err)
+	require.Equal(t, "kaos-app-mlci", u.Username)
 
 	for name, tok := range map[string]string{
 		"other namespace":       podToken(t, is, "other-ml", "yolo-workflow", nil),
+		"other app's namespace": podToken(t, is, "vision-mlci--train", "yolo-workflow", nil),
+		"no declared namespace": podToken(t, is, "vision-ml", "old-workflow", nil),
+		"empty namespace":       podToken(t, is, "", "old-workflow", nil),
+		"not a service account subject": podToken(t, is, "vision-ml", "yolo-workflow", func(c jwt.MapClaims) {
+			c["sub"] = "system:node:vision-ml:yolo-workflow"
+		}),
 		"not a workflow":        podToken(t, is, "vision-ml", "yolo", nil),
 		"no app":                podToken(t, is, "vision-ml", "-workflow", nil),
 		"app not declared":      podToken(t, is, "vision-ml", "ghost-workflow", nil),
@@ -131,11 +148,9 @@ func TestWorkload_Exchange(t *testing.T) {
 
 func TestNewWorkload(t *testing.T) {
 	svc := acl.NewAuthService(kvtest.GetStore(t.Context(), t), crypt.NewSecretStore([]byte("k")), authparams.ServiceCache{})
-	w, err := NewWorkload(config.KAOSWorkloadIdentity{}, svc)
+	w, err := NewWorkload(config.KAOSWorkloadIdentity{}, svc, nil)
 	require.NoError(t, err)
 	require.Nil(t, w, "off without an audience")
-	_, err = NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience, Issuer: "https://x"}, svc)
-	require.Error(t, err, "namespaces are required")
 
 	// Without an issuer, the cluster's: the issuer of the server's own service-account token.
 	is := newIssuer(t)
@@ -143,11 +158,11 @@ func TestNewWorkload(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(podToken(t, is, "vision-ml", "vision-lakefs", nil)+"\n"), 0o600))
 	defer func(old string) { serviceAccountTokenPath = old }(serviceAccountTokenPath)
 	serviceAccountTokenPath = path
-	w, err = NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience, Namespaces: []string{"vision-ml"}}, svc)
+	w, err = NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience}, svc, nil)
 	require.NoError(t, err)
 	require.Equal(t, is.URL, w.cfg.Issuer)
 
 	serviceAccountTokenPath = filepath.Join(t.TempDir(), "missing")
-	_, err = NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience, Namespaces: []string{"vision-ml"}}, svc)
+	_, err = NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience}, svc, nil)
 	require.Error(t, err)
 }

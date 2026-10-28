@@ -5,11 +5,9 @@ package tokenid
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -29,23 +27,23 @@ const WorkflowSuffix = "-workflow"
 var serviceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 // Workload accepts the Kubernetes service-account tokens of ML workflow pods. A token of service
-// account {app}-workflow in a configured namespace acts as the declared app user kaos-app-{app}
-// (pkg/auth/declared), with that user's groups; any other token is denied (CON-03). Exchange
-// trades such a token for an access key that expires, for S3 clients that sign requests.
+// account {app}-workflow acts as the declared app user kaos-app-{app} (pkg/auth/declared), with
+// that user's groups, when it comes from the namespace declared for that app; any other token is
+// denied (CON-03). Exchange trades such a token for an access key that expires, for S3 clients
+// that sign requests.
 type Workload struct {
 	cfg  config.KAOSWorkloadIdentity
 	keys *keySet
 	svc  auth.Service
+	apps *declared.Loaded
 	now  func() time.Time
 }
 
-// NewWorkload returns a Workload for cfg, or nil when cfg names no audience.
-func NewWorkload(cfg config.KAOSWorkloadIdentity, svc auth.Service) (*Workload, error) {
+// NewWorkload returns a Workload for cfg, or nil when cfg names no audience. apps are the
+// declared apps, with their namespaces.
+func NewWorkload(cfg config.KAOSWorkloadIdentity, svc auth.Service, apps *declared.Loaded) (*Workload, error) {
 	if cfg.Audience == "" {
 		return nil, nil
-	}
-	if len(cfg.Namespaces) == 0 {
-		return nil, errors.New("kaos.workload_identity needs namespaces")
 	}
 	if cfg.Issuer == "" {
 		raw, err := os.ReadFile(serviceAccountTokenPath)
@@ -64,6 +62,7 @@ func NewWorkload(cfg config.KAOSWorkloadIdentity, svc auth.Service) (*Workload, 
 		cfg:  cfg,
 		keys: newKeySet(cfg.Issuer, &http.Client{Timeout: 10 * time.Second}),
 		svc:  svc,
+		apps: apps,
 		now:  time.Now,
 	}, nil
 }
@@ -107,17 +106,22 @@ func (w *Workload) Resolve(ctx context.Context, token string) (*model.User, erro
 	return user, nil
 }
 
-// appUser maps subject system:serviceaccount:{namespace}:{app}-workflow to kaos-app-{app}.
+// appUser maps subject system:serviceaccount:{namespace}:{app}-workflow to kaos-app-{app}, when
+// that app is declared with that namespace.
 func (w *Workload) appUser(sub string) (string, bool) {
 	parts := strings.Split(sub, ":")
-	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" || !slices.Contains(w.cfg.Namespaces, parts[2]) {
+	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" {
 		return "", false
 	}
 	app, ok := strings.CutSuffix(parts[3], WorkflowSuffix)
 	if !ok || app == "" {
 		return "", false
 	}
-	return declared.UserPrefix + app, true
+	declaredApp, ok := w.apps.Get(declared.UserPrefix + app)
+	if !ok || declaredApp.Namespace == "" || declaredApp.Namespace != parts[2] {
+		return "", false
+	}
+	return declaredApp.User, true
 }
 
 // ExchangeResponse is the body Exchange answers with.
@@ -164,8 +168,8 @@ func (w *Workload) Exchange(rw http.ResponseWriter, r *http.Request) {
 var activeWorkload *Workload
 
 // ConfigureWorkload sets the server's Workload from cfg. Call before serving.
-func ConfigureWorkload(cfg config.KAOSWorkloadIdentity, svc auth.Service) error {
-	w, err := NewWorkload(cfg, svc)
+func ConfigureWorkload(cfg config.KAOSWorkloadIdentity, svc auth.Service, apps *declared.Loaded) error {
+	w, err := NewWorkload(cfg, svc, apps)
 	if err != nil {
 		return err
 	}

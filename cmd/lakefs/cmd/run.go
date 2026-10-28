@@ -121,15 +121,17 @@ var runCmd = &cobra.Command{
 		authService := multiuser.NewAuthService(ctx, cfg, logger, kvStore, authMetadataManager)
 
 		// Modified by KAOS: workload tokens of ML pods act as their app user, and are exchanged
-		// for access keys that expire (F-05). The app users are declared ones.
+		// for access keys that expire (F-05). The app users, and the namespace each app's pods
+		// run in, are the declared ones.
 		var exchangeTTL time.Duration
+		declaredApps := &declared.Loaded{}
 		if workload := baseCfg.KAOS.WorkloadIdentity; workload.Audience != "" {
 			if baseCfg.KAOS.AppUsers.Path == "" {
 				logger.Fatal("kaos.workload_identity needs kaos.app_users.path")
 			}
 			exchangeTTL = workload.KeyTTL
 			authService = declared.ExpiringKeys(authService, exchangeTTL)
-			if err := tokenid.ConfigureWorkload(workload, authService); err != nil {
+			if err := tokenid.ConfigureWorkload(workload, authService, declaredApps); err != nil {
 				logger.WithError(err).Fatal("kaos.workload_identity")
 			}
 		}
@@ -139,7 +141,7 @@ var runCmd = &cobra.Command{
 			if !multiuser.Enabled(cfg) {
 				logger.Fatal(`kaos.app_users.path needs auth.ui_config.rbac "internal"`)
 			}
-			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, exchangeTTL, logger)
+			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, exchangeTTL, declaredApps, logger)
 		}
 		// Modified by KAOS: identity-provider tokens as bearer tokens (F-03).
 		if tokenIdentity := baseCfg.KAOS.TokenIdentity; tokenIdentity.Issuer != "" {
