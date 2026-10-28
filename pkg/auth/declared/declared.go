@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/treeverse/lakefs/pkg/auth"
@@ -40,6 +41,34 @@ type App struct {
 	User            string `json:"user"`
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
+	// Namespace is where the app's workflow pods run: their service-account tokens act as User
+	// from there only (pkg/auth/tokenid, F-05). Empty: the app has no workload identity.
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// Loaded holds the apps of the last successful load, for workload identity.
+type Loaded struct {
+	mu   sync.RWMutex
+	apps map[string]App
+}
+
+// Get returns the loaded app with user name user.
+func (l *Loaded) Get(user string) (App, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	a, ok := l.apps[user]
+	return a, ok
+}
+
+// Set replaces the loaded apps.
+func (l *Loaded) Set(apps []App) {
+	byUser := make(map[string]App, len(apps))
+	for _, a := range apps {
+		byUser[a.User] = a
+	}
+	l.mu.Lock()
+	l.apps = byUser
+	l.mu.Unlock()
 }
 
 // Load reads one App per file in dir. Names starting with "." are skipped: a mounted Kubernetes
@@ -248,9 +277,9 @@ func setCredentials(ctx context.Context, svc auth.Service, user string, want *Ap
 	return nil
 }
 
-// Run loads dir and reconciles now and then every interval until ctx ends. A failed round is
-// logged and changes nothing more; the next round tries again.
-func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTTL time.Duration, logger logging.Logger) {
+// Run loads dir and reconciles now and then every interval until ctx ends, keeping each load in
+// loaded. A failed round is logged and changes nothing more; the next round tries again.
+func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTTL time.Duration, loaded *Loaded, logger logging.Logger) {
 	log := logger.WithField("service", "kaos_declared_app_users").WithField("path", dir)
 	round := func() {
 		apps, err := Load(dir)
@@ -258,6 +287,7 @@ func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTT
 			log.WithError(err).Error("Declared app users not applied")
 			return
 		}
+		loaded.Set(apps)
 		changes, err := Reconcile(ctx, svc, apps, exchangeTTL)
 		for _, c := range changes {
 			log.Info(c)

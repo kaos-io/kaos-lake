@@ -79,7 +79,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
   neither key opens stops the start. Code: `pkg/auth/rekey`. Used to move existing stacks off the
   lakeFS Helm chart's built-in default key.
 - **Declared app users** (PRD novelcore/kaos#1217 F-06). In multi-user mode, `kaos.app_users.path`
-  names a directory with one JSON file per ML app (`user`, `access_key_id`, `secret_access_key`),
+  names a directory with one JSON file per ML app (`user`, `access_key_id`, `secret_access_key`,
+  and optionally `namespace`, see workload identity),
   normally a mounted Secret. On start and every `kaos.app_users.interval` (default 30s) the server
   makes the store match it: each `kaos-app-*` user exists in Developers with exactly its declared
   key, undeclared `kaos-app-*` users are deleted with their keys, and other users are never
@@ -103,10 +104,11 @@ To release, open a pull request that bumps `kaos/VERSION`.
   Set `auth.ui_config.fallback_login_url: /oidc/login` for the UI's sign-in button. A person with
   no mapped role gets a 403 page saying so; nothing falls back to the admin key.
 - **Workload identity** (PRD novelcore/kaos#1217 F-05). With declared app users on,
-  `kaos.workload_identity` (`audience`, `namespaces`, `issuer`, `key_ttl` default 1h) accepts the
-  Kubernetes service-account tokens of ML workflow pods. A token of service account
-  `{app}-workflow` in one of `namespaces`, carrying `audience`, acts as the declared user
-  `kaos-app-{app}` (it must exist); every other token is denied. `issuer` defaults to the issuer of
+  `kaos.workload_identity` (`audience`, `issuer`, `key_ttl` default 1h) accepts the Kubernetes
+  service-account tokens of ML workflow pods. A token of service account `{app}-workflow`,
+  carrying `audience`, acts as the declared user `kaos-app-{app}` when it comes from the
+  `namespace` declared for that app (the user must exist); every other token is denied, as is
+  every token of an app declared without a namespace. `issuer` defaults to the issuer of
   the server's own service-account token, the cluster it runs in; keys come from its OIDC
   discovery as for token identity. Such a token works as `Authorization: Bearer`, and
   `POST /kaos/v1/credentials` with it returns a new access key of that user (`access_key_id`,

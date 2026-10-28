@@ -590,8 +590,6 @@ type KAOSWorkloadIdentity struct {
 	// Issuer of the tokens. Empty: the issuer of this server's own service-account token, that is
 	// the cluster it runs in.
 	Issuer string `mapstructure:"issuer"`
-	// Namespaces whose pods may call. Service account {app}-workflow there acts as kaos-app-{app}.
-	Namespaces []string `mapstructure:"namespaces"`
 	// KeyTTL is how long an exchanged access key works.
 	KeyTTL time.Duration `mapstructure:"key_ttl"`
 }
