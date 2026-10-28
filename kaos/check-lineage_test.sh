@@ -18,7 +18,7 @@ setup() {
   rm -rf "${work}/r" && mkdir "${work}/r" && cd "${work}/r"
   git_ init -q -b kaos
   printf 'Apache\n' >LICENSE && printf 'notice\n' >NOTICE
-  printf 'package a\n' >a.go && printf 'package b\n' >b.go
+  printf 'package a\n' >a.go && printf 'package b\n' >b.go && printf 'm v1 h1:a\n' >go.sum
   git_ add . && git_ commit -qm base
   base=$(git rev-parse HEAD)
   git_ checkout -qb upstream
@@ -52,6 +52,8 @@ setup; printf '// tweak\n' >>a.go; git_ commit -qam tweak; expect fail "modified
 setup; printf '// Modified by KAOS: tweak\n' >>a.go; git_ commit -qam tweak; expect pass "modified upstream file with notice"
 
 setup; printf 'package k\n' >kaos.go; git_ add kaos.go; git_ commit -qm new; expect pass "new KAOS file"
+
+setup; printf 'm v2 h1:b\n' >go.sum; git_ commit -qam deps; expect pass "go.sum changed (generated, no notice possible)"
 
 setup; git_ checkout -q --orphan other; git_ commit -qm orphan; expect fail "HEAD not descending from v1.86.0" "does not descend"
 

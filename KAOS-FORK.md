@@ -102,3 +102,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
   group mapping as a bearer token, and the same lakeFS session `/auth/login` creates is started.
   Set `auth.ui_config.fallback_login_url: /oidc/login` for the UI's sign-in button. A person with
   no mapped role gets a 403 page saying so; nothing falls back to the admin key.
+- **Dependency security fixes** (PRD novelcore/kaos#1217 F-09). Go modules raised to versions
+  that fix their CVEs: kin-openapi v0.149.0 (2 critical), thrift v0.24.0, grpc v1.83.2,
+  golang.org/x/{crypto,net,text,mod}, go-jose v4.1.6, klauspost/compress v1.18.7. kin-openapi after
+  v0.131 reads the whole request body even for operations excluded from body validation, which
+  buffered every upload in memory (1 GiB object: 2.8 GB RSS); `pkg/api/serve.go` gives the
+  validator a body-less copy of such requests, so uploads stream as before (1 GiB: ~120 MB).
+  `go.sum` is exempt from the modification-notice check (generated; `go.mod` carries the notice).
