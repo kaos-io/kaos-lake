@@ -138,6 +138,8 @@ func setBaseDefaults(cfgType string) {
 	viper.SetDefault("security.check_latest_version", false)
 	// Modified by KAOS: how often declared app users are reapplied (pkg/auth/declared).
 	viper.SetDefault("kaos.app_users.interval", 30*time.Second)
+	// Modified by KAOS: how long access keys exchanged for workload tokens work (pkg/auth/tokenid).
+	viper.SetDefault("kaos.workload_identity.key_ttl", time.Hour)
 	viper.SetDefault("security.check_latest_version_cache", time.Hour)
 
 	viper.SetDefault("ui.enabled", true)

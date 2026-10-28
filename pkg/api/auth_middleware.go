@@ -118,6 +118,9 @@ func checkSecurityRequirements(r *http.Request,
 				// caller's own identity (pkg/auth/tokenid, PRD novelcore/kaos#1217 F-03).
 				if id := tokenid.Active(); id != nil && id.Owns(parts[1]) {
 					user, err = id.Resolve(ctx, parts[1])
+				} else if wl := tokenid.ActiveWorkload(); wl != nil && wl.Owns(parts[1]) {
+					// Modified by KAOS: an ML workflow pod's own token is its app user (F-05).
+					user, err = wl.Resolve(ctx, parts[1])
 				} else {
 					user, err = auth.UserByToken(ctx, authService, parts[1])
 				}
