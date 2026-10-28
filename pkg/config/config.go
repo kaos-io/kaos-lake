@@ -575,7 +575,25 @@ type BaseConfig struct {
 		// BrowserLogin signs people into the UI with the same identity provider (F-04). Empty
 		// ClientID: off. Needs TokenIdentity.
 		BrowserLogin KAOSBrowserLogin `mapstructure:"browser_login"`
+		// WorkloadIdentity accepts the service-account tokens of ML workflow pods as their app
+		// user, directly or exchanged for short-lived access keys (F-05). Empty Audience: off.
+		// Needs AppUsers.
+		WorkloadIdentity KAOSWorkloadIdentity `mapstructure:"workload_identity"`
 	} `mapstructure:"kaos"`
+}
+
+// KAOSWorkloadIdentity configures workload tokens in pkg/auth/tokenid. Modified by KAOS (PRD
+// novelcore/kaos#1217 F-05).
+type KAOSWorkloadIdentity struct {
+	// Audience the tokens must name: the audience of the pods' projected token.
+	Audience string `mapstructure:"audience"`
+	// Issuer of the tokens. Empty: the issuer of this server's own service-account token, that is
+	// the cluster it runs in.
+	Issuer string `mapstructure:"issuer"`
+	// Namespaces whose pods may call. Service account {app}-workflow there acts as kaos-app-{app}.
+	Namespaces []string `mapstructure:"namespaces"`
+	// KeyTTL is how long an exchanged access key works.
+	KeyTTL time.Duration `mapstructure:"key_ttl"`
 }
 
 // KAOSTokenIdentity configures pkg/auth/tokenid. Modified by KAOS (PRD novelcore/kaos#1217 F-03).

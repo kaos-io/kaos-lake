@@ -106,7 +106,7 @@ func TestReconcile(t *testing.T) {
 	ctx := t.Context()
 	svc := newStore(t)
 
-	changes, err := declared.Reconcile(ctx, svc, []declared.App{yolo, mlci})
+	changes, err := declared.Reconcile(ctx, svc, []declared.App{yolo, mlci}, 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, changes)
 	requireKey(t, svc, yolo)
@@ -117,7 +117,7 @@ func TestReconcile(t *testing.T) {
 	require.False(t, allowed(t, svc, yolo.User, permissions.DeleteRepositoryAction, repo))
 	require.False(t, allowed(t, svc, yolo.User, permissions.CreateUserAction, permissions.UserArn("x")))
 
-	changes, err = declared.Reconcile(ctx, svc, []declared.App{yolo, mlci})
+	changes, err = declared.Reconcile(ctx, svc, []declared.App{yolo, mlci}, 0)
 	require.NoError(t, err)
 	require.Empty(t, changes, "a second run changes nothing")
 
@@ -134,7 +134,7 @@ func TestReconcile_EditorsCreateRepositories(t *testing.T) {
 	require.NoError(t, svc.AddUserToGroup(ctx, "alice", setup.DevelopersGroup))
 	require.False(t, allowed(t, svc, "alice", permissions.CreateRepositoryAction, repo), "upstream Developers cannot")
 
-	_, err = declared.Reconcile(ctx, svc, nil)
+	_, err = declared.Reconcile(ctx, svc, nil, 0)
 	require.NoError(t, err)
 	require.True(t, allowed(t, svc, "alice", permissions.CreateRepositoryAction, repo))
 	require.True(t, allowed(t, svc, "alice", permissions.AttachStorageNamespaceAction, permissions.StorageNamespace("gs://bucket/data")))
@@ -144,12 +144,12 @@ func TestReconcile_EditorsCreateRepositories(t *testing.T) {
 func TestReconcile_RotateAndRemove(t *testing.T) {
 	ctx := t.Context()
 	svc := newStore(t)
-	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo, mlci})
+	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo, mlci}, 0)
 	require.NoError(t, err)
 
 	rotated := yolo
 	rotated.AccessKeyID, rotated.SecretAccessKey = "AKIAJYOLO000000002Q", "yolo-secret-2"
-	_, err = declared.Reconcile(ctx, svc, []declared.App{rotated})
+	_, err = declared.Reconcile(ctx, svc, []declared.App{rotated}, 0)
 	require.NoError(t, err)
 	requireKey(t, svc, rotated)
 	requireNoKey(t, svc, yolo.AccessKeyID)
@@ -160,7 +160,7 @@ func TestReconcile_RotateAndRemove(t *testing.T) {
 	// Same key id, new secret: the stored secret is replaced.
 	resecret := rotated
 	resecret.SecretAccessKey = "yolo-secret-3"
-	_, err = declared.Reconcile(ctx, svc, []declared.App{resecret})
+	_, err = declared.Reconcile(ctx, svc, []declared.App{resecret}, 0)
 	require.NoError(t, err)
 	requireKey(t, svc, resecret)
 }
@@ -168,7 +168,7 @@ func TestReconcile_RotateAndRemove(t *testing.T) {
 func TestReconcile_UndoesDrift(t *testing.T) {
 	ctx := t.Context()
 	svc := newStore(t)
-	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo})
+	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo}, 0)
 	require.NoError(t, err)
 
 	// By hand: the app joins Admins, gets a second key, and the policy is widened.
@@ -181,7 +181,7 @@ func TestReconcile_UndoesDrift(t *testing.T) {
 	}, true))
 	require.True(t, allowed(t, svc, yolo.User, permissions.DeleteRepositoryAction, repo))
 
-	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo})
+	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo}, 0)
 	require.NoError(t, err)
 	require.False(t, allowed(t, svc, yolo.User, permissions.DeleteRepositoryAction, repo))
 	requireNoKey(t, svc, "AKIAJEXTRA00000001Q")
@@ -193,16 +193,16 @@ func TestReconcile_UndoesDrift(t *testing.T) {
 func TestReconcile_RecreatedAppLosesOldKey(t *testing.T) {
 	ctx := t.Context()
 	svc := newStore(t)
-	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo})
+	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo}, 0)
 	require.NoError(t, err)
 	// Deleting the user removes its stored key too; the acl store's DeleteUser alone would not.
-	changes, err := declared.Reconcile(ctx, svc, nil)
+	changes, err := declared.Reconcile(ctx, svc, nil, 0)
 	require.NoError(t, err)
 	require.Equal(t, []string{"deleted access key " + yolo.AccessKeyID + " of " + yolo.User, "deleted user " + yolo.User}, changes)
 
 	again := yolo
 	again.AccessKeyID, again.SecretAccessKey = "AKIAJYOLO000000003Q", "yolo-secret-new"
-	_, err = declared.Reconcile(ctx, svc, []declared.App{again})
+	_, err = declared.Reconcile(ctx, svc, []declared.App{again}, 0)
 	require.NoError(t, err)
 	requireKey(t, svc, again)
 	requireNoKey(t, svc, yolo.AccessKeyID)

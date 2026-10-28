@@ -115,6 +115,10 @@ func Serve(
 		r.Get("/oidc/login", bl.Login)
 		r.Get("/oidc/callback", bl.Callback)
 	}
+	// Modified by KAOS: ML workflow pods exchange their token for an access key (F-05).
+	if wl := tokenid.ActiveWorkload(); wl != nil {
+		r.Post("/kaos/v1/credentials", wl.Exchange)
+	}
 
 	// Configuration flag to control if the embedded UI is served
 	// or not and assign the correct handler for each case.

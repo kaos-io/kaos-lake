@@ -102,6 +102,17 @@ To release, open a pull request that bumps `kaos/VERSION`.
   group mapping as a bearer token, and the same lakeFS session `/auth/login` creates is started.
   Set `auth.ui_config.fallback_login_url: /oidc/login` for the UI's sign-in button. A person with
   no mapped role gets a 403 page saying so; nothing falls back to the admin key.
+- **Workload identity** (PRD novelcore/kaos#1217 F-05). With declared app users on,
+  `kaos.workload_identity` (`audience`, `namespaces`, `issuer`, `key_ttl` default 1h) accepts the
+  Kubernetes service-account tokens of ML workflow pods. A token of service account
+  `{app}-workflow` in one of `namespaces`, carrying `audience`, acts as the declared user
+  `kaos-app-{app}` (it must exist); every other token is denied. `issuer` defaults to the issuer of
+  the server's own service-account token, the cluster it runs in; keys come from its OIDC
+  discovery as for token identity. Such a token works as `Authorization: Bearer`, and
+  `POST /kaos/v1/credentials` with it returns a new access key of that user (`access_key_id`,
+  `secret_access_key`, `expiration`) for S3 clients. Exchanged keys start with `KAOSX`, are refused
+  once `key_ttl` old, and are deleted by the declared-user reconcile after that. Code:
+  `pkg/auth/tokenid/workload.go`, `pkg/auth/declared/exchange.go`.
 - **Dependency security fixes** (PRD novelcore/kaos#1217 F-09). Go modules raised to versions
   that fix their CVEs: kin-openapi v0.149.0 (2 critical), thrift v0.24.0, grpc v1.83.2,
   golang.org/x/{crypto,net,text,mod}, go-jose v4.1.6, klauspost/compress v1.18.7. kin-openapi after

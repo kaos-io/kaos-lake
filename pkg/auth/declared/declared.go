@@ -81,8 +81,9 @@ func Load(dir string) ([]App, error) {
 }
 
 // Reconcile makes the store match apps and the fixed group policies, and returns a description of
-// each change it made. Users without UserPrefix are never changed.
-func Reconcile(ctx context.Context, svc auth.Service, apps []App) ([]string, error) {
+// each change it made. Users without UserPrefix are never changed. A declared app user also keeps
+// its exchanged keys younger than exchangeTTL (F-05).
+func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL time.Duration) ([]string, error) {
 	var changes []string
 	note := func(format string, args ...any) { changes = append(changes, fmt.Sprintf(format, args...)) }
 
@@ -92,7 +93,7 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App) ([]string, err
 	declared := map[string]bool{}
 	for _, a := range apps {
 		declared[a.User] = true
-		if err := ensureApp(ctx, svc, a, note); err != nil {
+		if err := ensureApp(ctx, svc, a, exchangeTTL, note); err != nil {
 			return changes, fmt.Errorf("app user %s: %w", a.User, err)
 		}
 	}
@@ -105,7 +106,7 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App) ([]string, err
 			continue
 		}
 		// DeleteUser leaves credentials behind, so remove them first.
-		if err := setCredentials(ctx, svc, u.Username, nil, note); err != nil {
+		if err := setCredentials(ctx, svc, u.Username, nil, 0, note); err != nil {
 			return changes, fmt.Errorf("app user %s: %w", u.Username, err)
 		}
 		if err := svc.DeleteUser(ctx, u.Username); err != nil {
@@ -174,7 +175,7 @@ func sameStatement(a, b model.Statement) bool {
 	return a.Effect == b.Effect && a.Resource == b.Resource && slices.Equal(a.Action, b.Action) && len(a.Condition) == 0 && len(b.Condition) == 0
 }
 
-func ensureApp(ctx context.Context, svc auth.Service, a App, note func(string, ...any)) error {
+func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Duration, note func(string, ...any)) error {
 	_, err := svc.GetUser(ctx, a.User)
 	if errors.Is(err, auth.ErrNotFound) {
 		if _, err := svc.CreateUser(ctx, &model.User{Username: a.User, CreatedAt: time.Now()}); err != nil {
@@ -205,17 +206,22 @@ func ensureApp(ctx context.Context, svc auth.Service, a App, note func(string, .
 		}
 		note("added user %s to %s", a.User, AppGroup)
 	}
-	return setCredentials(ctx, svc, a.User, &a, note)
+	return setCredentials(ctx, svc, a.User, &a, exchangeTTL, note)
 }
 
-// setCredentials leaves user with exactly want's access key, or with none when want is nil.
-func setCredentials(ctx context.Context, svc auth.Service, user string, want *App, note func(string, ...any)) error {
+// setCredentials leaves user with exactly want's access key, or none when want is nil, and its
+// exchanged keys younger than exchangeTTL.
+func setCredentials(ctx context.Context, svc auth.Service, user string, want *App, exchangeTTL time.Duration, note func(string, ...any)) error {
 	creds, _, err := svc.ListUserCredentials(ctx, user, &model.PaginationParams{Amount: -1})
 	if err != nil {
 		return fmt.Errorf("list credentials: %w", err)
 	}
 	have := false
+	now := time.Now()
 	for _, c := range creds {
+		if strings.HasPrefix(c.AccessKeyID, ExchangeKeyPrefix) && !Expired(c, exchangeTTL, now) {
+			continue
+		}
 		if want != nil && c.AccessKeyID == want.AccessKeyID {
 			// GetCredentialsForUser blanks the secret; GetCredentials returns it (through the auth
 			// cache, whose TTL is shorter than the reconcile interval).
@@ -244,7 +250,7 @@ func setCredentials(ctx context.Context, svc auth.Service, user string, want *Ap
 
 // Run loads dir and reconciles now and then every interval until ctx ends. A failed round is
 // logged and changes nothing more; the next round tries again.
-func Run(ctx context.Context, svc auth.Service, dir string, interval time.Duration, logger logging.Logger) {
+func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTTL time.Duration, logger logging.Logger) {
 	log := logger.WithField("service", "kaos_declared_app_users").WithField("path", dir)
 	round := func() {
 		apps, err := Load(dir)
@@ -252,7 +258,7 @@ func Run(ctx context.Context, svc auth.Service, dir string, interval time.Durati
 			log.WithError(err).Error("Declared app users not applied")
 			return
 		}
-		changes, err := Reconcile(ctx, svc, apps)
+		changes, err := Reconcile(ctx, svc, apps, exchangeTTL)
 		for _, c := range changes {
 			log.Info(c)
 		}
