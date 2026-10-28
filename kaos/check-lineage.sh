@@ -15,7 +15,7 @@
 #      (catches copies that bypass git history).
 #   4. LICENSE and NOTICE are unchanged from v1.86.0.
 #   5. Every upstream file KAOS modified carries the notice "Modified by KAOS"
-#      (Apache-2.0 section 4(b)); KAOS-only files are exempt.
+#      (Apache-2.0 section 4(b)); KAOS-only files and go.sum (generated) are exempt.
 set -eu
 
 BASE=36fad6476e23c118b91247523a0c7fb045cead4e
@@ -57,10 +57,12 @@ fi
 # 4. licence files
 git diff --quiet "${BASE}" HEAD -- LICENSE NOTICE || err "LICENSE or NOTICE differ from lakeFS v1.86.0"
 
-# 5. modification notices on changed upstream files
+# 5. modification notices on changed upstream files. go.sum is exempt: generated checksums,
+#    which cannot carry a comment; the go.mod beside it records the KAOS change.
 git diff --name-only --diff-filter=M "${BASE}" HEAD >"${tmp}/modified"
 while IFS= read -r f; do
   [ -n "${f}" ] || continue
+  [ "$(basename "${f}")" = go.sum ] && continue
   grep -q "${NOTICE_MARK}" "${f}" || err "${f} is modified from upstream but lacks \"${NOTICE_MARK}\""
 done <"${tmp}/modified"
 

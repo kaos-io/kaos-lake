@@ -5644,7 +5644,10 @@ func TestController_CopyObjectHandler(t *testing.T) {
 			SrcPath: "foo/bar",
 		})
 		require.NoError(t, err)
-		require.NotNil(t, resp.JSON400)
+		// Modified by KAOS: since kin-openapi v0.149 (PRD novelcore/kaos#1217 F-09) an empty
+		// required query argument passes request validation and the generated parameter binding
+		// rejects it, still with 400 but with a plain-text body, so JSON400 is not set.
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode())
 	})
 
 	t.Run("read-only repository", func(t *testing.T) {

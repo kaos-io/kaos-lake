@@ -186,15 +186,22 @@ func OapiRequestValidatorWithOptions(swagger *openapi3.T, options *openapi3filte
 
 func validateRequest(r *http.Request, route *routers.Route, pathParams map[string]string, options *openapi3filter.Options) (int, error) {
 	// Extension - validation exclude body
+	validated := r
 	if _, ok := route.Operation.Extensions[extensionValidationExcludeBody]; ok {
 		o := *options
 		o.ExcludeRequestBody = true
 		options = &o
+		// Modified by KAOS: kin-openapi after v0.131 reads the whole body even when
+		// ExcludeRequestBody is set, buffering every upload in memory (a 1 GiB object took the
+		// server to 2.8 GB). The validator sees a body-less copy; the handler streams the real
+		// one (PRD novelcore/kaos#1217 F-09).
+		validated = r.Clone(r.Context())
+		validated.Body = http.NoBody
 	}
 
 	// Validate request
 	requestValidationInput := &openapi3filter.RequestValidationInput{
-		Request:    r,
+		Request:    validated,
 		PathParams: pathParams,
 		Route:      route,
 		Options:    options,
