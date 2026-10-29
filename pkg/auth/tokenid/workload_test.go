@@ -107,6 +107,27 @@ func TestWorkload_Resolve(t *testing.T) {
 	})
 }
 
+// The cluster's issuer is unreachable (AC-07): a workload token is denied, as a bearer and at
+// the exchange, and no key is created.
+func TestWorkload_IssuerDown(t *testing.T) {
+	is := newIssuer(t)
+	tok := podToken(t, is, "vision-ml", "yolo-workflow", nil)
+	w, svc := newWorkload(t, is)
+	is.Close()
+
+	_, err := w.Resolve(t.Context(), tok)
+	require.ErrorIs(t, err, ErrDenied)
+	require.ErrorIs(t, err, auth.ErrAuthenticatingRequest)
+	r := httptest.NewRequest(http.MethodPost, "/kaos/v1/credentials", nil)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	w.Exchange(rec, r)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	creds, _, err := svc.ListUserCredentials(t.Context(), "kaos-app-yolo", &model.PaginationParams{Amount: 10})
+	require.NoError(t, err)
+	require.Empty(t, creds)
+}
+
 func TestWorkload_Exchange(t *testing.T) {
 	is := newIssuer(t)
 	w, svc := newWorkload(t, is)

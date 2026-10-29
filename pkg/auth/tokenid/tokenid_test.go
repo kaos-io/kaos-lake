@@ -213,6 +213,27 @@ func TestResolve_IssuerDown(t *testing.T) {
 	require.ErrorIs(t, err, auth.ErrAuthenticatingRequest)
 }
 
+// An issuer that accepts the connection and never answers (AC-07) costs a request the client
+// timeout, then denies it; both identities' clients have a timeout, so no request waits forever.
+func TestKeySet_IssuerHangs(t *testing.T) {
+	release := make(chan struct{})
+	hung := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(func() { close(release); hung.Close() })
+
+	start := time.Now()
+	_, err := newKeySet(hung.URL, &http.Client{Timeout: 100 * time.Millisecond}).key(t.Context(), "k1")
+	require.Error(t, err)
+	require.Less(t, time.Since(start), 5*time.Second)
+
+	is := newIssuer(t)
+	id, _ := newIdentity(t, is)
+	w, _ := newWorkload(t, is)
+	for name, client := range map[string]*http.Client{"token identity": id.keys.client, "workload identity": w.keys.client} {
+		require.Positive(t, client.Timeout, name)
+		require.LessOrEqual(t, client.Timeout, 30*time.Second, name)
+	}
+}
+
 // A new signing key is picked up when a token names it.
 func TestResolve_KeyRotation(t *testing.T) {
 	is := newIssuer(t)
