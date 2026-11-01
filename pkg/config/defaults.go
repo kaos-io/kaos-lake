@@ -140,6 +140,8 @@ func setBaseDefaults(cfgType string) {
 	viper.SetDefault("kaos.app_users.interval", 30*time.Second)
 	// Modified by KAOS: how long access keys exchanged for workload tokens work (pkg/auth/tokenid).
 	viper.SetDefault("kaos.workload_identity.key_ttl", time.Hour)
+	// Modified by KAOS: how often the platform's repositories are reapplied (pkg/kaos/repos).
+	viper.SetDefault("kaos.repositories.interval", time.Minute)
 	viper.SetDefault("security.check_latest_version_cache", time.Hour)
 
 	viper.SetDefault("ui.enabled", true)

@@ -38,6 +38,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/graveler"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/repos"
 	"github.com/treeverse/lakefs/pkg/kv"
 	"github.com/treeverse/lakefs/pkg/logging"
 	"github.com/treeverse/lakefs/pkg/permissions"
@@ -2552,6 +2553,11 @@ func (c *Controller) SetRepositoryMetadata(w http.ResponseWriter, r *http.Reques
 	}) {
 		return
 	}
+	// Modified by KAOS: repository labels keep their meaning (PRD novelcore/kaos#1283 CON-02).
+	if err := repos.ValidateMetadata(repository, body.Metadata.AdditionalProperties); err != nil {
+		writeError(w, r, http.StatusBadRequest, err)
+		return
+	}
 	ctx := r.Context()
 	c.LogAction(ctx, "update_repo_metadata", r, repository, "", "")
 	err := c.Catalog.UpdateRepositoryMetadata(ctx, repository, body.Metadata.AdditionalProperties)
@@ -2568,6 +2574,11 @@ func (c *Controller) DeleteRepositoryMetadata(w http.ResponseWriter, r *http.Req
 			Resource: permissions.RepoArn(repository),
 		},
 	}) {
+		return
+	}
+	// Modified by KAOS: the platform's repository labels stay (PRD novelcore/kaos#1283 CON-02).
+	if err := repos.ValidateDelete(body.Keys); err != nil {
+		writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
 	ctx := r.Context()

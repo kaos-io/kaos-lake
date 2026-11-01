@@ -207,3 +207,23 @@ func TestReconcile_RecreatedAppLosesOldKey(t *testing.T) {
 	requireKey(t, svc, again)
 	requireNoKey(t, svc, yolo.AccessKeyID)
 }
+
+// PRD novelcore/kaos#1283 F-01: an app may declare its outputs repository; a name without the
+// outputs- prefix fails the whole load.
+func TestLoad_OutputsRepository(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, outputs string) {
+		data := `{"user":"kaos-app-yolo","access_key_id":"AKIAYOLO","secret_access_key":"s","outputs_repository":"` + outputs + `"}`
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600))
+	}
+	write("kaos-app-yolo", "outputs-yolo")
+	apps, err := declared.Load(dir)
+	require.NoError(t, err)
+	var loaded declared.Loaded
+	loaded.Set(apps)
+	require.Equal(t, map[string]string{"yolo": "outputs-yolo"}, loaded.Outputs())
+
+	write("kaos-app-yolo", "yolo-outputs")
+	_, err = declared.Load(dir)
+	require.ErrorIs(t, err, declared.ErrInvalid)
+}

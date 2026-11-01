@@ -579,6 +579,15 @@ type BaseConfig struct {
 		// user, directly or exchanged for short-lived access keys (F-05). Empty Audience: off.
 		// Needs AppUsers.
 		WorkloadIdentity KAOSWorkloadIdentity `mapstructure:"workload_identity"`
+		// Repositories keeps the platform's repositories in place (pkg/kaos/repos, PRD
+		// novelcore/kaos#1283 F-01): DefaultDataset and each declared app's outputs repository,
+		// created under StorageNamespacePrefix. Empty StorageNamespacePrefix: off.
+		Repositories struct {
+			StorageNamespacePrefix string        `mapstructure:"storage_namespace_prefix"`
+			StorageID              string        `mapstructure:"storage_id"`
+			DefaultDataset         string        `mapstructure:"default_dataset"`
+			Interval               time.Duration `mapstructure:"interval"`
+		} `mapstructure:"repositories"`
 	} `mapstructure:"kaos"`
 }
 

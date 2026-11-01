@@ -20,6 +20,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/auth"
 	"github.com/treeverse/lakefs/pkg/auth/model"
 	"github.com/treeverse/lakefs/pkg/auth/setup"
+	"github.com/treeverse/lakefs/pkg/kaos/repos"
 	"github.com/treeverse/lakefs/pkg/logging"
 	"github.com/treeverse/lakefs/pkg/permissions"
 )
@@ -44,6 +45,9 @@ type App struct {
 	// Namespace is where the app's workflow pods run: their service-account tokens act as User
 	// from there only (pkg/auth/tokenid, F-05). Empty: the app has no workload identity.
 	Namespace string `json:"namespace,omitempty"`
+	// OutputsRepository is the app's own outputs repository, kept in place by pkg/kaos/repos
+	// (PRD novelcore/kaos#1283 F-01). Empty: the app has none.
+	OutputsRepository string `json:"outputs_repository,omitempty"`
 }
 
 // Loaded holds the apps of the last successful load, for workload identity.
@@ -58,6 +62,19 @@ func (l *Loaded) Get(user string) (App, bool) {
 	defer l.mu.RUnlock()
 	a, ok := l.apps[user]
 	return a, ok
+}
+
+// Outputs returns each loaded app's outputs repository, by app name (the user without UserPrefix).
+func (l *Loaded) Outputs() map[string]string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	out := map[string]string{}
+	for user, a := range l.apps {
+		if a.OutputsRepository != "" {
+			out[strings.TrimPrefix(user, UserPrefix)] = a.OutputsRepository
+		}
+	}
+	return out
 }
 
 // Set replaces the loaded apps.
@@ -100,6 +117,9 @@ func Load(dir string) ([]App, error) {
 			return nil, fmt.Errorf("%s: %w: user %q must start with %q", path, ErrInvalid, a.User, UserPrefix)
 		case len(a.AccessKeyID) < 3 || len(a.AccessKeyID) > 20 || a.SecretAccessKey == "":
 			return nil, fmt.Errorf("%s: %w: access key", path, ErrInvalid)
+		case a.OutputsRepository != "" && !repos.ValidName(a.OutputsRepository, repos.OutputsPrefix):
+			return nil, fmt.Errorf("%s: %w: outputs repository %q must be %s followed by 3-48 lowercase letters, digits or hyphens",
+				path, ErrInvalid, a.OutputsRepository, repos.OutputsPrefix)
 		case users[a.User] || keys[a.AccessKeyID]:
 			return nil, fmt.Errorf("%s: %w: user %q or its access key is declared twice", path, ErrInvalid, a.User)
 		}

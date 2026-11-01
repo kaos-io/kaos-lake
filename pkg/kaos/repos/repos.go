@@ -1,0 +1,243 @@
+// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-01/F-02): new file, Apache-2.0.
+
+// Package repos gives repositories a purpose people can see (PRD novelcore/kaos#1283): a dataset
+// (`dataset-*`), an ML app's outputs (`outputs-<app>`), or other. The purpose is repository
+// metadata under the `kaos.` prefix. The platform's own repositories (the project's default
+// dataset, each app's outputs) are declared and kept in place by Reconcile; a repository is never
+// deleted here.
+package repos
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/treeverse/lakefs/pkg/catalog"
+	"github.com/treeverse/lakefs/pkg/graveler"
+	"github.com/treeverse/lakefs/pkg/logging"
+)
+
+const (
+	DatasetPrefix = "dataset-"
+	OutputsPrefix = "outputs-"
+
+	KeyKind        = "kaos.kind"
+	KeyApp         = "kaos.app"
+	KeyDefault     = "kaos.default"
+	KeyTemplate    = "kaos.template"
+	KeyDescription = "kaos.description"
+	KeyOrphaned    = "kaos.orphaned"
+
+	KindDataset = "dataset"
+	KindOutputs = "outputs"
+
+	defaultBranch = "main"
+)
+
+var ErrInvalid = errors.New("invalid repository label")
+
+// platformKeys are written by kaos-lake only: which repositories the platform declared.
+var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned}
+
+// nameRest is what follows a purpose prefix (CON-02): 3 to 48 lowercase letters, digits, hyphens.
+var nameRest = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,47}$`)
+
+// ValidName reports whether name is prefix followed by a valid rest.
+func ValidName(name, prefix string) bool {
+	rest, ok := strings.CutPrefix(name, prefix)
+	return ok && nameRest.MatchString(rest)
+}
+
+// ValidateMetadata checks the labels a caller writes on repository name. People may label a
+// `dataset-*` repository a dataset and describe it; the outputs kind and the platform keys are
+// kaos-lake's.
+func ValidateMetadata(name string, md map[string]string) error {
+	for k := range md {
+		if slices.Contains(platformKeys, k) {
+			return fmt.Errorf("%w: %s is set by the platform only", ErrInvalid, k)
+		}
+	}
+	kind, ok := md[KeyKind]
+	switch {
+	case !ok:
+		return nil
+	case kind == KindDataset && !ValidName(name, DatasetPrefix):
+		return fmt.Errorf("%w: a dataset's name is %s followed by 3-48 lowercase letters, digits or hyphens; %q is not",
+			ErrInvalid, DatasetPrefix, name)
+	case kind == KindDataset:
+		return nil
+	case kind == KindOutputs:
+		return fmt.Errorf("%w: outputs repositories are created by the platform, one per ML app", ErrInvalid)
+	default:
+		return fmt.Errorf("%w: %s is %q; want %q", ErrInvalid, KeyKind, kind, KindDataset)
+	}
+}
+
+// ValidateDelete checks the label keys a caller removes from a repository.
+func ValidateDelete(keys []string) error {
+	for _, k := range keys {
+		if k == KeyKind || slices.Contains(platformKeys, k) {
+			return fmt.Errorf("%w: %s is kept by the platform", ErrInvalid, k)
+		}
+	}
+	return nil
+}
+
+// Declared is one repository the platform keeps in place.
+type Declared struct {
+	Name    string
+	Kind    string
+	App     string // the outputs' app; empty for a dataset
+	Default bool   // the project's default dataset
+}
+
+// Labels are the declared repository's `kaos.` metadata.
+func (d Declared) Labels() map[string]string {
+	md := map[string]string{KeyKind: d.Kind}
+	if d.App != "" {
+		md[KeyApp] = d.App
+	}
+	if d.Default {
+		md[KeyDefault] = "true"
+	}
+	return md
+}
+
+// Desired is the project's default dataset, when named, and one outputs repository per app.
+func Desired(defaultDataset string, outputs map[string]string) []Declared {
+	var want []Declared
+	if defaultDataset != "" {
+		want = append(want, Declared{Name: defaultDataset, Kind: KindDataset, Default: true})
+	}
+	apps := make([]string, 0, len(outputs))
+	for app := range outputs {
+		apps = append(apps, app)
+	}
+	slices.Sort(apps)
+	for _, app := range apps {
+		want = append(want, Declared{Name: outputs[app], Kind: KindOutputs, App: app})
+	}
+	return want
+}
+
+// Catalog is what Reconcile needs of the lakeFS catalog.
+type Catalog interface {
+	GetRepository(ctx context.Context, repository string) (*catalog.Repository, error)
+	CreateRepository(ctx context.Context, repository, storageID, storageNamespace, branch string, readOnly bool) (*catalog.Repository, error)
+	GetRepositoryMetadata(ctx context.Context, repository string) (graveler.RepositoryMetadata, error)
+	UpdateRepositoryMetadata(ctx context.Context, repository string, metadata graveler.RepositoryMetadata) error
+	DeleteRepositoryMetadata(ctx context.Context, repository string, keys []string) error
+	ListRepositories(ctx context.Context, limit int, prefix, searchString, after string, opts ...catalog.ListRepositoriesOptionsFunc) ([]*catalog.Repository, bool, error)
+}
+
+// Reconcile creates each declared repository that is missing, under storagePrefix, and puts its
+// labels back. An outputs repository no app declares any longer is labelled orphaned and kept: it
+// holds results. It returns a description of each change.
+func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix string, want []Declared) ([]string, error) {
+	var changes []string
+	note := func(format string, args ...any) { changes = append(changes, fmt.Sprintf(format, args...)) }
+	declared := map[string]bool{}
+	for _, d := range want {
+		declared[d.Name] = true
+		if err := ensure(ctx, c, storageID, storagePrefix, d, note); err != nil {
+			return changes, fmt.Errorf("repository %s: %w", d.Name, err)
+		}
+	}
+	err := forEachOutputs(ctx, c, func(name string) error {
+		if declared[name] {
+			return nil
+		}
+		md, err := c.GetRepositoryMetadata(ctx, name)
+		if err != nil || md[KeyKind] != KindOutputs || md[KeyOrphaned] == "true" {
+			return err
+		}
+		if err := c.UpdateRepositoryMetadata(ctx, name, graveler.RepositoryMetadata{KeyOrphaned: "true"}); err != nil {
+			return err
+		}
+		note("labelled %s orphaned: no app declares it", name)
+		return nil
+	})
+	return changes, err
+}
+
+func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d Declared, note func(string, ...any)) error {
+	_, err := c.GetRepository(ctx, d.Name)
+	if errors.Is(err, graveler.ErrNotFound) {
+		ns := strings.TrimSuffix(storagePrefix, "/") + "/" + d.Name
+		if _, err := c.CreateRepository(ctx, d.Name, storageID, ns, defaultBranch, false); err != nil {
+			return fmt.Errorf("create in %s: %w", ns, err)
+		}
+		note("created %s in %s", d.Name, ns)
+	} else if err != nil {
+		return err
+	}
+	md, err := c.GetRepositoryMetadata(ctx, d.Name)
+	if err != nil {
+		return err
+	}
+	update := graveler.RepositoryMetadata{}
+	for k, v := range d.Labels() {
+		if md[k] != v {
+			update[k] = v
+		}
+	}
+	if len(update) > 0 {
+		if err := c.UpdateRepositoryMetadata(ctx, d.Name, update); err != nil {
+			return err
+		}
+		note("labelled %s %v", d.Name, update)
+	}
+	if md[KeyOrphaned] != "" {
+		if err := c.DeleteRepositoryMetadata(ctx, d.Name, []string{KeyOrphaned}); err != nil {
+			return err
+		}
+		note("%s is declared again", d.Name)
+	}
+	return nil
+}
+
+func forEachOutputs(ctx context.Context, c Catalog, fn func(name string) error) error {
+	after := ""
+	for {
+		page, more, err := c.ListRepositories(ctx, 100, OutputsPrefix, "", after)
+		if err != nil {
+			return err
+		}
+		for _, r := range page {
+			if err := fn(r.Name); err != nil {
+				return fmt.Errorf("repository %s: %w", r.Name, err)
+			}
+			after = r.Name
+		}
+		if !more || len(page) == 0 {
+			return nil
+		}
+	}
+}
+
+// Run reconciles the declared repositories now and every interval until ctx ends. outputs returns
+// each declared app's outputs repository, by app name.
+func Run(ctx context.Context, c Catalog, storageID, storagePrefix, defaultDataset string,
+	outputs func() map[string]string, interval time.Duration, log logging.Logger) {
+	log = log.WithField("service", "kaos_repositories")
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		changes, err := Reconcile(ctx, c, storageID, storagePrefix, Desired(defaultDataset, outputs()))
+		for _, ch := range changes {
+			log.Info(ch)
+		}
+		if err != nil {
+			log.WithError(err).Error("Declared repositories not applied")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
