@@ -64,9 +64,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
 
 - **No phone-home by default.** `stats.enabled`, `security.check_latest_version` are `false`
   and `security.audit_check_url` is empty (the audit check is off). Each can be set again.
-- **No Enterprise upsell in the web UI.** The top bar has no Datasets link and `/datasets` goes to
-  the repositories; a repository has no Objects/Tables toggle. Upstream's Datasets and Tables pages
-  only advertised lakeFS Enterprise ("Book a demo").
+- **No Enterprise upsell in the web UI.** A repository has no Objects/Tables toggle, and the top
+  bar's Datasets entry opens KAOS's own page. Upstream's Datasets and Tables pages only advertised
+  lakeFS Enterprise ("Book a demo").
+- **Datasets in the web UI** (PRD novelcore/kaos#1283 F-03/F-04/F-06, `webui/src/lib/kaos`,
+  `webui/src/pages/kaos`). Repository cards carry a coloured purpose badge (Dataset, Default,
+  Outputs · app, Orphaned, Other). The Datasets page lists `dataset-*` repositories with their
+  description, template and latest version, with Release version (tags `v1`, `v2`, …). New dataset
+  creates one from a template through the regular API as the signed-in person.
 - **Repositories with a purpose** (PRD novelcore/kaos#1283 F-01/F-02). `kaos.*` repository
   metadata marks a dataset (`dataset-*`) or an ML app's outputs (`outputs-<app>`). With
   `kaos.repositories.storage_namespace_prefix` set, the project's default dataset

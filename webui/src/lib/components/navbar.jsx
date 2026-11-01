@@ -91,8 +91,10 @@ const TopNav = () => {
                 <Navbar.Toggle aria-controls="navbarScroll" />
                 <Navbar.Collapse id="navbarScroll">
                     <Nav className="me-auto my-2 my-lg-0" style={{ maxHeight: '100px' }} navbarScroll>
-                        {/* Modified by KAOS: no link to upstream's Enterprise-only Datasets page. */}
+                        {/* Modified by KAOS: Datasets is KAOS's own page (PRD novelcore/kaos#1283), not
+                            upstream's Enterprise-only one. */}
                         <TopNavLink href="/repositories">Repositories</TopNavLink>
+                        <TopNavLink href="/datasets">Datasets</TopNavLink>
                         <TopNavLink href="/auth">Administration</TopNavLink>
                     </Nav>
 

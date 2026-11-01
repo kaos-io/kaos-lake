@@ -1,6 +1,9 @@
 import React, { useEffect } from 'react';
 
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+// Modified by KAOS: the Datasets pages (PRD novelcore/kaos#1283).
+import KaosDatasetsPage from './kaos/datasets';
+import KaosNewDatasetPage from './kaos/newDataset';
 import { WithLoginConfigContext } from '../lib/hooks/conf';
 
 // pages
@@ -98,8 +101,12 @@ export const IndexPage = () => {
                                         <Route index element={<Navigate to="objects" />} />
                                     </Route>
                                 </Route>
-                                {/* Modified by KAOS: Datasets is an Enterprise-only page upstream; send it to the repositories. */}
-                                <Route path="datasets" element={<Navigate to="/repositories" replace />} />
+                                {/* Modified by KAOS: KAOS's own Datasets pages (PRD novelcore/kaos#1283), in place of
+                                    upstream's Enterprise-only one. */}
+                                <Route path="datasets" element={<Layout />}>
+                                    <Route index element={<KaosDatasetsPage />} />
+                                    <Route path="new" element={<KaosNewDatasetPage />} />
+                                </Route>
                                 <Route path="auth" element={<Layout />}>
                                     <Route index element={<Navigate to="credentials" replace />} />
                                     <Route element={<AuthLayout />}>
