@@ -1,8 +1,8 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1217 F-06): new file, Apache-2.0.
 
-// Package declared keeps the multi-user store in line with what the platform declares: one user
-// and access key per ML app, delivered as files, and the fixed policies of the groups that people
-// join from their project role. People are not declared here: their groups come from their token.
+// Package declared keeps the multi-user store in line with what the platform declares: one user,
+// access key and policy per ML app, delivered as files, and the fixed policies of the groups that
+// people join from their project role. People are not declared here: their groups come from their token.
 package declared
 
 import (
@@ -28,8 +28,9 @@ import (
 const (
 	// UserPrefix marks the users this package owns; it never touches any other user.
 	UserPrefix = "kaos-app-"
-	// AppGroup is the group app users join: project editors (PRD D-04).
-	AppGroup = setup.DevelopersGroup
+	// EditorsGroup is the group of project editors (people). App users used to join it; since
+	// PRD novelcore/kaos#1283 D-04 they have their own policy and no group.
+	EditorsGroup = setup.DevelopersGroup
 	// RepositoryCreatePolicy lets editors create repositories, which upstream Developers cannot:
 	// project members create repositories by hand (PRD novelcore/kaos#1147). It also lets them
 	// label the datasets they create (dataset-*, PRD novelcore/kaos#1283). Deletion stays with Admins.
@@ -133,7 +134,11 @@ func Load(dir string) ([]App, error) {
 // Reconcile makes the store match apps and the fixed group policies, and returns a description of
 // each change it made. Users without UserPrefix are never changed. A declared app user also keeps
 // its exchanged keys younger than exchangeTTL (F-05).
-func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL time.Duration) ([]string, error) {
+func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL time.Duration, opts ...Option) ([]string, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	var changes []string
 	note := func(format string, args ...any) { changes = append(changes, fmt.Sprintf(format, args...)) }
 
@@ -143,7 +148,7 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL ti
 	declared := map[string]bool{}
 	for _, a := range apps {
 		declared[a.User] = true
-		if err := ensureApp(ctx, svc, a, exchangeTTL, note); err != nil {
+		if err := ensureApp(ctx, svc, a, exchangeTTL, o.legacyRepository, note); err != nil {
 			return changes, fmt.Errorf("app user %s: %w", a.User, err)
 		}
 	}
@@ -163,6 +168,9 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL ti
 			return changes, fmt.Errorf("delete app user %s: %w", u.Username, err)
 		}
 		note("deleted user %s", u.Username)
+	}
+	if err := removeStaleAppPolicies(ctx, svc, declared, note); err != nil {
+		return changes, err
 	}
 	return changes, nil
 }
@@ -212,15 +220,15 @@ func ensureRepositoryCreate(ctx context.Context, svc auth.Service, note func(str
 		}
 		note("restored policy %s", RepositoryCreatePolicy)
 	}
-	attached, _, err := svc.ListGroupPolicies(ctx, AppGroup, &model.PaginationParams{Amount: -1})
+	attached, _, err := svc.ListGroupPolicies(ctx, EditorsGroup, &model.PaginationParams{Amount: -1})
 	if err != nil {
-		return fmt.Errorf("list %s policies: %w", AppGroup, err)
+		return fmt.Errorf("list %s policies: %w", EditorsGroup, err)
 	}
 	if !slices.ContainsFunc(attached, func(p *model.Policy) bool { return p.DisplayName == RepositoryCreatePolicy }) {
-		if err := svc.AttachPolicyToGroup(ctx, RepositoryCreatePolicy, AppGroup); err != nil {
-			return fmt.Errorf("attach %s to %s: %w", RepositoryCreatePolicy, AppGroup, err)
+		if err := svc.AttachPolicyToGroup(ctx, RepositoryCreatePolicy, EditorsGroup); err != nil {
+			return fmt.Errorf("attach %s to %s: %w", RepositoryCreatePolicy, EditorsGroup, err)
 		}
-		note("attached policy %s to %s", RepositoryCreatePolicy, AppGroup)
+		note("attached policy %s to %s", RepositoryCreatePolicy, EditorsGroup)
 	}
 	return nil
 }
@@ -229,7 +237,7 @@ func sameStatement(a, b model.Statement) bool {
 	return a.Effect == b.Effect && a.Resource == b.Resource && slices.Equal(a.Action, b.Action) && len(a.Condition) == 0 && len(b.Condition) == 0
 }
 
-func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Duration, note func(string, ...any)) error {
+func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Duration, legacyRepository string, note func(string, ...any)) error {
 	_, err := svc.GetUser(ctx, a.User)
 	if errors.Is(err, auth.ErrNotFound) {
 		if _, err := svc.CreateUser(ctx, &model.User{Username: a.User, CreatedAt: time.Now()}); err != nil {
@@ -243,22 +251,15 @@ func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Du
 	if err != nil {
 		return fmt.Errorf("list groups: %w", err)
 	}
-	inGroup := false
+	// Apps are in no group: their rights are exactly their own policy (PRD #1283 D-04).
 	for _, g := range groups {
-		if g.DisplayName == AppGroup {
-			inGroup = true
-			continue
-		}
 		if err := svc.RemoveUserFromGroup(ctx, a.User, g.DisplayName); err != nil {
 			return fmt.Errorf("remove from %s: %w", g.DisplayName, err)
 		}
 		note("removed user %s from %s", a.User, g.DisplayName)
 	}
-	if !inGroup {
-		if err := svc.AddUserToGroup(ctx, a.User, AppGroup); err != nil {
-			return fmt.Errorf("add to %s: %w", AppGroup, err)
-		}
-		note("added user %s to %s", a.User, AppGroup)
+	if err := ensureAppPolicy(ctx, svc, a, legacyRepository, note); err != nil {
+		return err
 	}
 	return setCredentials(ctx, svc, a.User, &a, exchangeTTL, note)
 }
@@ -302,9 +303,19 @@ func setCredentials(ctx context.Context, svc auth.Service, user string, want *Ap
 	return nil
 }
 
+// Option tunes Reconcile and Run.
+type Option func(*options)
+
+type options struct{ legacyRepository string }
+
+// WithLegacyRepository lets every app read and write the named repository too: the project
+// repository that apps created before PRD novelcore/kaos#1283 still write their outputs to.
+// Empty: no such access.
+func WithLegacyRepository(name string) Option { return func(o *options) { o.legacyRepository = name } }
+
 // Run loads dir and reconciles now and then every interval until ctx ends, keeping each load in
 // loaded. A failed round is logged and changes nothing more; the next round tries again.
-func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTTL time.Duration, loaded *Loaded, logger logging.Logger) {
+func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTTL time.Duration, loaded *Loaded, logger logging.Logger, opts ...Option) {
 	log := logger.WithField("service", "kaos_declared_app_users").WithField("path", dir)
 	round := func() {
 		apps, err := Load(dir)
@@ -313,7 +324,7 @@ func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTT
 			return
 		}
 		loaded.Set(apps)
-		changes, err := Reconcile(ctx, svc, apps, exchangeTTL)
+		changes, err := Reconcile(ctx, svc, apps, exchangeTTL, opts...)
 		for _, c := range changes {
 			log.Info(c)
 		}

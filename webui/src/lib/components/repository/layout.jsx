@@ -5,7 +5,8 @@ import Breadcrumb from 'react-bootstrap/Breadcrumb';
 import Stack from 'react-bootstrap/Stack';
 
 import { useRefs } from '../../hooks/repo';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useParams } from 'react-router-dom';
+import { KaosRepoPanel } from '../../kaos/repoPanel';
 import { RepositoryNavTabs } from './tabs';
 import { Link } from '../nav';
 import { RefContextProvider } from '../../hooks/repo';
@@ -45,6 +46,7 @@ const RepoNav = () => {
 
 export const RepositoryPageLayout = ({ fluid = 'sm' }) => {
     const [activePage, setActivePage] = useState('objects');
+    const { repoId } = useParams();
     return (
         <RefContextProvider>
             <div>
@@ -53,6 +55,9 @@ export const RepositoryPageLayout = ({ fluid = 'sm' }) => {
                 <div className="full-width-tabs-border">
                     <RepositoryNavTabs active={activePage} />
                 </div>
+                {/* Modified by KAOS: what this repository is for and where to go next (PRD
+                    novelcore/kaos#1283 F-03/F-07). */}
+                <KaosRepoPanel repoId={repoId} />
 
                 <Container fluid={fluid}>
                     <div className="mt-4">

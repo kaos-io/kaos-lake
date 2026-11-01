@@ -289,6 +289,17 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 		if err != nil {
 			log.WithError(err).Error("Declared repositories not applied")
 		}
+		// A dataset's main changes only through a merge. Done after labelling, so the label that
+		// the New dataset flow sets last (after its first commit to main) is what starts it.
+		if p, ok := c.(ProtectionCatalog); ok {
+			changes, err := ReconcileProtection(ctx, c, p)
+			for _, ch := range changes {
+				log.Info(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Dataset branch protection not applied")
+			}
+		}
 		if svc != nil {
 			changes, err := ReconcileShares(ctx, c, svc)
 			for _, ch := range changes {

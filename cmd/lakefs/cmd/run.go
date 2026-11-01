@@ -35,6 +35,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/gateway/sig"
 	"github.com/treeverse/lakefs/pkg/graveler/ref"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/meluxina"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
 	"github.com/treeverse/lakefs/pkg/kv"
 	_ "github.com/treeverse/lakefs/pkg/kv/cosmosdb"
@@ -142,7 +143,8 @@ var runCmd = &cobra.Command{
 			if !multiuser.Enabled(cfg) {
 				logger.Fatal(`kaos.app_users.path needs auth.ui_config.rbac "internal"`)
 			}
-			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, exchangeTTL, declaredApps, logger)
+			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, exchangeTTL, declaredApps, logger,
+				declared.WithLegacyRepository(baseCfg.KAOS.Repositories.LegacyRepository))
 		}
 		// Modified by KAOS: identity-provider tokens as bearer tokens (F-03).
 		if tokenIdentity := baseCfg.KAOS.TokenIdentity; tokenIdentity.Issuer != "" {
@@ -195,6 +197,10 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("failed to create catalog")
 		}
 		defer func() { _ = c.Close() }()
+
+		// Modified by KAOS: keep the latest MeluXina staging snapshot across restarts (PRD
+		// novelcore/kaos#1283 F-10).
+		meluxina.Configure(kvStore)
 
 		// Modified by KAOS: keep the project's default dataset and each declared app's outputs
 		// repository in place (PRD novelcore/kaos#1283 F-01).

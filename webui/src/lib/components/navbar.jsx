@@ -10,6 +10,7 @@ import { useConfigContext } from '../hooks/configProvider';
 import { auth } from '../api';
 import { AUTH_STATUS, LAKEFS_POST_LOGIN_NEXT, useAuth } from '../auth/authContext';
 import { ROUTES } from '../utils';
+import { ConsoleLink } from '../kaos/consoleLink';
 
 const NavUserInfo = () => {
     const { user, status } = useAuth();
@@ -96,6 +97,8 @@ const TopNav = () => {
                         <TopNavLink href="/repositories">Repositories</TopNavLink>
                         <TopNavLink href="/datasets">Datasets</TopNavLink>
                         <TopNavLink href="/auth">Administration</TopNavLink>
+                        {/* Modified by KAOS: link back to the KAOS console (kaos.ui.console_url). */}
+                        <ConsoleLink />
                     </Nav>
 
                     <DarkModeToggle />

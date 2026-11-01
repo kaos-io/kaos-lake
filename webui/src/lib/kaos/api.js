@@ -14,6 +14,8 @@ import {
     tags,
 } from '../api';
 
+import { canonicalTemplate } from './templates';
+
 export const DATASET_PREFIX = 'dataset-';
 export const KIND = { dataset: 'dataset', outputs: 'outputs' };
 
@@ -33,6 +35,9 @@ export const setRepoMetadata = (repoId, metadata) =>
         method: 'POST',
         body: JSON.stringify({ metadata }),
     });
+
+/** KAOS settings of the UI: { console_url } (empty when there is no console link). */
+export const getUIConfig = () => request('/kaos/v1/ui');
 
 export const listTemplates = () => request('/kaos/v1/dataset-templates');
 
@@ -67,7 +72,11 @@ export const listByPrefix = async (prefix) => {
  * Creates dataset `name` from `template` as the signed-in person: the repository, one commit of the
  * rendered files on main, then its labels. onStep reports progress.
  */
-export const createDataset = async ({ name, description, template, values, storagePrefix }, onStep = () => {}) => {
+export const createDataset = async (
+    { name, description, template: asked, values, storagePrefix },
+    onStep = () => {},
+) => {
+    const template = canonicalTemplate(asked); // the old name "yolo" is written as "ultralytics"
     onStep('Rendering the template');
     const { files } = await renderTemplate(template, name, description, values);
     onStep('Creating the repository');

@@ -1,6 +1,6 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283 F-05): new file, Apache-2.0.
 //
-// Edit a text file of a repository in the UI. A YOLO dataset's data.yaml opens as a class-list
+// Edit a text file of a repository in the UI. An Ultralytics (YOLO) dataset's data.yaml opens as a class-list
 // form (kaos-lake parses and re-renders it, so nc always matches); other text files open in a text
 // editor. Saving never writes main directly: it opens a pull request from a draft branch (OQ-2).
 import React, { useState } from 'react';
@@ -13,6 +13,8 @@ import { AlertError, Loading } from '../components/controls';
 import { Link } from '../components/nav';
 import { parseTemplate, proposeChange, renderTemplate } from './api';
 import { useRepoLabels } from './purpose';
+import { canonicalTemplate } from './templates';
+import { pullsHref } from './pipeline';
 
 export const MAX_EDIT_BYTES = 1 << 20;
 const TEXT_EXTENSIONS = ['yaml', 'yml', 'md', 'txt', 'json', 'csv', 'toml', 'ini', 'py', 'cfg'];
@@ -24,8 +26,10 @@ export const editable = (path, sizeBytes, contentType) => {
     return text && sizeBytes >= 0 && sizeBytes <= MAX_EDIT_BYTES;
 };
 
-/** The form file of the repository's template, when path is it (YOLO: data.yaml at the root). */
-export const formFor = (labels, path) => (labels['kaos.template'] === 'yolo' && path === 'data.yaml' ? 'yolo' : '');
+/** The form file of the repository's template, when path is it (Ultralytics: data.yaml at the root).
+ * Datasets labelled with the old template name "yolo" are treated the same. */
+export const formFor = (labels, path) =>
+    canonicalTemplate(labels['kaos.template']) === 'ultralytics' && path === 'data.yaml' ? 'ultralytics' : '';
 
 export const EditFileButton = ({ repoId, refId, path, sizeBytes, contentType }) => {
     const labels = useRepoLabels(repoId);
@@ -93,18 +97,21 @@ const EditModal = ({ repoId, refId, path, template, description, onClose }) => {
             <Modal.Body>
                 {text === null && !error && <Loading />}
                 {pull ? (
-                    <p>
-                        Pull request opened:{' '}
+                    <div>
+                        <p>
+                            Pull request opened: <strong>{pull.title}</strong>. main changes only when it is merged.
+                        </p>
                         <Link
+                            className="btn btn-success me-2"
                             href={{
                                 pathname: '/repositories/:repoId/pulls/:pullId',
                                 params: { repoId, pullId: pull.id },
                             }}
                         >
-                            {pull.title}
+                            Review and merge the pull request
                         </Link>
-                        . main changes when it is merged.
-                    </p>
+                        <Link href={pullsHref(repoId)}>All open pull requests</Link>
+                    </div>
                 ) : (
                     text !== null && (
                         <>

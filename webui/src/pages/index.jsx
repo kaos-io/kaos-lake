@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 // Modified by KAOS: the Datasets pages (PRD novelcore/kaos#1283).
-import KaosDatasetsPage from './kaos/datasets';
+import KaosDatasetsPage, { DatasetPage as KaosDatasetPage } from './kaos/datasets';
 import KaosNewDatasetPage from './kaos/newDataset';
 import { WithLoginConfigContext } from '../lib/hooks/conf';
 
@@ -106,6 +106,7 @@ export const IndexPage = () => {
                                 <Route path="datasets" element={<Layout />}>
                                     <Route index element={<KaosDatasetsPage />} />
                                     <Route path="new" element={<KaosNewDatasetPage />} />
+                                    <Route path=":repoId" element={<KaosDatasetPage />} />
                                 </Route>
                                 <Route path="auth" element={<Layout />}>
                                     <Route index element={<Navigate to="credentials" replace />} />

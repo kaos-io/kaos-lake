@@ -47,18 +47,18 @@ describe('createDataset', () => {
             {
                 name: 'dataset-cars',
                 description: ' Cars ',
-                template: 'yolo',
+                template: 'yolo', // the old name still works; it is written as ultralytics
                 values: { classes: ['car'] },
                 storagePrefix: 'gs://b/lake/',
             },
             (s) => steps.push(s),
         );
         expect(calls.map((c) => c[0] + ':' + (c[0] === 'fetch' ? c[2] + ' ' + c[1] : c.slice(1).join(' ')))).toEqual([
-            'fetch:POST /kaos/v1/dataset-templates/yolo/render',
+            'fetch:POST /kaos/v1/dataset-templates/ultralytics/render',
             'repo:[object Object]',
             'upload:dataset-cars main data.yaml',
             'upload:dataset-cars main images/train/.keep',
-            'commit:dataset-cars main Create dataset-cars from the yolo template',
+            'commit:dataset-cars main Create dataset-cars from the ultralytics template',
             'fetch:POST /api/v1/repositories/dataset-cars/metadata',
         ]);
         expect(calls[1][1]).toEqual({
@@ -67,7 +67,7 @@ describe('createDataset', () => {
             default_branch: 'main',
         });
         expect(calls[5][3]).toEqual({
-            metadata: { 'kaos.kind': 'dataset', 'kaos.template': 'yolo', 'kaos.description': 'Cars' },
+            metadata: { 'kaos.kind': 'dataset', 'kaos.template': 'ultralytics', 'kaos.description': 'Cars' },
         });
         expect(steps[0]).toBe('Rendering the template');
     });

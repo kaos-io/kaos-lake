@@ -594,9 +594,32 @@ type BaseConfig struct {
 			DefaultDataset         string `mapstructure:"default_dataset"`
 			// Location labels every repository under the prefix (kaos.location), for example
 			// "europe-west1 · Belgium" (PRD novelcore/kaos#1283 D-10). Empty: no label.
-			Location string        `mapstructure:"location"`
-			Interval time.Duration `mapstructure:"interval"`
+			Location string `mapstructure:"location"`
+			// LegacyRepository is the project repository that ML apps created before outputs
+			// repositories still write to; every declared app user may read and write it
+			// (pkg/auth/declared, PRD novelcore/kaos#1283 F-08). Empty: none.
+			LegacyRepository string        `mapstructure:"legacy_repository"`
+			Interval         time.Duration `mapstructure:"interval"`
 		} `mapstructure:"repositories"`
+		// UI holds settings of the web UI.
+		UI struct {
+			// ConsoleURL is the KAOS console; the UI header links back to it. Empty: no link.
+			ConsoleURL string `mapstructure:"console_url"`
+			// CORSOrigins are the exact origins (https://host) of the KAOS console that may read
+			// this API from the browser: GET only, bearer token, never cookies (pkg/kaos/cors).
+			// Empty: off.
+			CORSOrigins []string `mapstructure:"cors_origins"`
+		} `mapstructure:"ui"`
+		// Meluxina accepts the staging snapshot of MeluXina's stager from pods of Namespaces,
+		// by their service-account token (pkg/kaos/meluxina, PRD novelcore/kaos#1283 F-10).
+		// Needs WorkloadIdentity. Empty: off.
+		Meluxina struct {
+			Namespaces []string `mapstructure:"namespaces"`
+		} `mapstructure:"meluxina"`
+		// Unknown collects kaos.* keys this build does not know. Config is decoded exactly (an
+		// unknown key is an error), but a newer chart or operator may set a kaos.* key an older
+		// image lacks; that must never stop the server from starting.
+		Unknown map[string]any `mapstructure:",remain"`
 	} `mapstructure:"kaos"`
 }
 
