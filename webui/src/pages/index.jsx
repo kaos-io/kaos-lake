@@ -5,7 +5,6 @@ import { WithLoginConfigContext } from '../lib/hooks/conf';
 
 // pages
 import RepositoriesPage from './repositories';
-import DatasetsPage from './datasets';
 import { RepositoryPageLayout } from '../lib/components/repository/layout.jsx';
 import RepositoryObjectsPage from './repositories/repository/objects';
 import RepositoryObjectsViewPage from './repositories/repository/objectViewer';
@@ -99,9 +98,8 @@ export const IndexPage = () => {
                                         <Route index element={<Navigate to="objects" />} />
                                     </Route>
                                 </Route>
-                                <Route path="datasets" element={<Layout />}>
-                                    <Route index element={<DatasetsPage />} />
-                                </Route>
+                                {/* Modified by KAOS: Datasets is an Enterprise-only page upstream; send it to the repositories. */}
+                                <Route path="datasets" element={<Navigate to="/repositories" replace />} />
                                 <Route path="auth" element={<Layout />}>
                                     <Route index element={<Navigate to="credentials" replace />} />
                                     <Route element={<AuthLayout />}>
