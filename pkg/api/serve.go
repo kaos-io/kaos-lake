@@ -22,6 +22,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/templates"
 	"github.com/treeverse/lakefs/pkg/logging"
 	"github.com/treeverse/lakefs/pkg/stats"
 	"github.com/treeverse/lakefs/pkg/upload"
@@ -119,6 +120,12 @@ func Serve(
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
 	}
+	// Modified by KAOS: dataset templates for the UI and the CLI (pkg/kaos/templates, PRD
+	// novelcore/kaos#1283 F-04/F-05). They render files; the caller commits them as itself.
+	th := templates.Handler{StorageNamespacePrefix: cfg.GetBaseConfig().KAOS.Repositories.StorageNamespacePrefix}
+	r.Get("/kaos/v1/dataset-templates", th.List)
+	r.Post("/kaos/v1/dataset-templates/{name}/render", th.Render)
+	r.Post("/kaos/v1/dataset-templates/{name}/parse", th.Parse)
 
 	// Configuration flag to control if the embedded UI is served
 	// or not and assign the correct handler for each case.

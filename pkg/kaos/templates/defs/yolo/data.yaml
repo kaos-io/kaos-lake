@@ -1,0 +1,10 @@
+# YOLO dataset (Ultralytics). Paths are relative to the dataset's root.
+path: .
+train: images/train
+val: images/val
+test: images/test
+nc: {{len .classes}}
+names:
+{{- range $i, $c := .classes}}
+  {{$i}}: {{quote $c}}
+{{- end}}
