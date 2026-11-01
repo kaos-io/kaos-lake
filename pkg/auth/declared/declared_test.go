@@ -112,9 +112,11 @@ func TestReconcile(t *testing.T) {
 	require.NotEmpty(t, changes)
 	requireKey(t, svc, yolo)
 	requireKey(t, svc, mlci)
-	// Apps are project editors: read and write data, no deleting repositories, no auth admin.
-	require.True(t, allowed(t, svc, yolo.User, permissions.WriteObjectAction, objct))
-	require.True(t, allowed(t, svc, yolo.User, permissions.CreateCommitAction, permissions.BranchArn("data", "outputs")))
+	// Apps are in no group; their rights are their own policy (PRD #1283 D-04).
+	groups, _, err := svc.ListUserGroups(ctx, yolo.User, &model.PaginationParams{Amount: -1})
+	require.NoError(t, err)
+	require.Empty(t, groups)
+	require.False(t, allowed(t, svc, yolo.User, permissions.WriteObjectAction, objct), "no legacy repository configured")
 	require.False(t, allowed(t, svc, yolo.User, permissions.DeleteRepositoryAction, repo))
 	require.False(t, allowed(t, svc, yolo.User, permissions.CreateUserAction, permissions.UserArn("x")))
 
@@ -140,6 +142,8 @@ func TestReconcile_EditorsCreateRepositories(t *testing.T) {
 	require.True(t, allowed(t, svc, "alice", permissions.CreateRepositoryAction, repo))
 	require.True(t, allowed(t, svc, "alice", permissions.AttachStorageNamespaceAction, permissions.StorageNamespace("gs://bucket/data")))
 	require.False(t, allowed(t, svc, "alice", permissions.DeleteRepositoryAction, repo))
+	// Editors cannot delete the branch protection that keeps a dataset's main to pull requests.
+	require.False(t, allowed(t, svc, "alice", permissions.SetBranchProtectionRulesAction, repo))
 }
 
 func TestReconcile_RotateAndRemove(t *testing.T) {
@@ -199,7 +203,7 @@ func TestReconcile_RecreatedAppLosesOldKey(t *testing.T) {
 	// Deleting the user removes its stored key too; the acl store's DeleteUser alone would not.
 	changes, err := declared.Reconcile(ctx, svc, nil, 0)
 	require.NoError(t, err)
-	require.Equal(t, []string{"deleted access key " + yolo.AccessKeyID + " of " + yolo.User, "deleted user " + yolo.User}, changes)
+	require.Equal(t, []string{"deleted access key " + yolo.AccessKeyID + " of " + yolo.User, "deleted user " + yolo.User, "deleted policy KAOSApp-yolo"}, changes)
 
 	again := yolo
 	again.AccessKeyID, again.SecretAccessKey = "AKIAJYOLO000000003Q", "yolo-secret-new"
@@ -244,4 +248,89 @@ func TestReconcile_EditorsLabelDatasets(t *testing.T) {
 		}
 	}
 	require.Equal(t, []string{"arn:lakefs:fs:::repository/dataset-*"}, update)
+}
+
+// PRD novelcore/kaos#1283 F-08 / D-04 / T-01: every app reads datasets, writes only its own
+// outputs repository, and the legacy repository only while one is configured.
+func TestReconcile_PerAppRights(t *testing.T) {
+	ctx := t.Context()
+	svc := newStore(t)
+	a := yolo
+	a.OutputsRepository = "outputs-yolo"
+	b := mlci
+	b.OutputsRepository = "outputs-mlci"
+
+	_, err := declared.Reconcile(ctx, svc, []declared.App{a, b}, 0)
+	require.NoError(t, err)
+
+	obj := func(repo string) string { return permissions.ObjectArn(repo, "main/x") }
+	branch := func(repo string) string { return permissions.BranchArn(repo, "main") }
+	// A dataset: read and list, never write, commit, branch or delete.
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("dataset-cars")))
+	require.True(t, allowed(t, svc, a.User, permissions.ListObjectsAction, permissions.RepoArn("dataset-cars")))
+	require.True(t, allowed(t, svc, a.User, permissions.ReadRepositoryAction, permissions.RepoArn("dataset-cars")))
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("dataset-cars")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateCommitAction, branch("dataset-cars")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateTagAction, permissions.TagArn("dataset-cars", "v1")))
+	require.False(t, allowed(t, svc, a.User, permissions.DeleteObjectAction, obj("dataset-cars")))
+	// Its own outputs: read, write, commit, branch, tag.
+	for _, action := range []string{permissions.ReadObjectAction, permissions.WriteObjectAction, permissions.DeleteObjectAction} {
+		require.True(t, allowed(t, svc, a.User, action, obj("outputs-yolo")), action)
+	}
+	require.True(t, allowed(t, svc, a.User, permissions.CreateCommitAction, branch("outputs-yolo")))
+	require.True(t, allowed(t, svc, a.User, permissions.CreateBranchAction, permissions.BranchArn("outputs-yolo", "run-1")))
+	require.True(t, allowed(t, svc, a.User, permissions.CreateTagAction, permissions.TagArn("outputs-yolo", "t")))
+	require.False(t, allowed(t, svc, a.User, permissions.DeleteRepositoryAction, permissions.RepoArn("outputs-yolo")))
+	// Another app's outputs, and other repositories: nothing.
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("outputs-yolo")))
+	require.False(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("outputs-mlci")))
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("outputs-mlci")))
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("outputs-yolo2")), "no prefix match")
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("data")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateRepositoryAction, permissions.RepoArn("outputs-new")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateUserAction, permissions.UserArn("x")))
+	require.True(t, allowed(t, svc, b.User, permissions.WriteObjectAction, obj("outputs-mlci")))
+	require.False(t, allowed(t, svc, b.User, permissions.WriteObjectAction, obj("outputs-yolo")))
+
+	// The legacy project repository is writable only once configured, and again closed when not.
+	_, err = declared.Reconcile(ctx, svc, []declared.App{a, b}, 0, declared.WithLegacyRepository("data"))
+	require.NoError(t, err)
+	require.True(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("data")))
+	require.True(t, allowed(t, svc, b.User, permissions.CreateCommitAction, branch("data")))
+	require.False(t, allowed(t, svc, a.User, permissions.DeleteRepositoryAction, permissions.RepoArn("data")))
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("data2")))
+	_, err = declared.Reconcile(ctx, svc, []declared.App{a, b}, 0)
+	require.NoError(t, err)
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj("data")))
+}
+
+// An app without an outputs repository still reads datasets; policies follow the declaration and
+// non-app users and policies are never touched.
+func TestReconcile_AppPolicyLifecycle(t *testing.T) {
+	ctx := t.Context()
+	svc := newStore(t)
+	_, err := declared.Reconcile(ctx, svc, []declared.App{yolo, mlci}, 0)
+	require.NoError(t, err)
+	require.True(t, allowed(t, svc, yolo.User, permissions.ReadObjectAction, permissions.ObjectArn("dataset-x", "main/a")))
+
+	// Drift: an extra policy on the app is detached, an edited app policy is restored.
+	require.NoError(t, svc.WritePolicy(ctx, &model.Policy{CreatedAt: time.Now(), DisplayName: "Other",
+		Statement: model.Statements{{Effect: model.StatementEffectAllow, Action: []string{"fs:*"}, Resource: permissions.All}}}, false))
+	require.NoError(t, svc.AttachPolicyToUser(ctx, "Other", yolo.User))
+	require.NoError(t, svc.WritePolicy(ctx, &model.Policy{CreatedAt: time.Now(), DisplayName: declared.AppPolicyName(yolo.User),
+		Statement: model.Statements{{Effect: model.StatementEffectAllow, Action: []string{"fs:*"}, Resource: permissions.All}}}, true))
+	require.True(t, allowed(t, svc, yolo.User, permissions.DeleteRepositoryAction, repo))
+	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo, mlci}, 0)
+	require.NoError(t, err)
+	require.False(t, allowed(t, svc, yolo.User, permissions.DeleteRepositoryAction, repo))
+
+	// An app no longer declared loses its user and policy; "Other" stays.
+	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo}, 0)
+	require.NoError(t, err)
+	_, err = svc.GetPolicy(ctx, declared.AppPolicyName(mlci.User))
+	require.ErrorIs(t, err, auth.ErrNotFound)
+	_, err = svc.GetPolicy(ctx, declared.AppPolicyName(yolo.User))
+	require.NoError(t, err)
+	_, err = svc.GetPolicy(ctx, "Other")
+	require.NoError(t, err)
 }

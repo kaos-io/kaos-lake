@@ -22,8 +22,11 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/cors"
 	"github.com/treeverse/lakefs/pkg/kaos/datacatalog"
+	"github.com/treeverse/lakefs/pkg/kaos/meluxina"
 	"github.com/treeverse/lakefs/pkg/kaos/templates"
+	"github.com/treeverse/lakefs/pkg/kaos/uiconfig"
 	"github.com/treeverse/lakefs/pkg/logging"
 	"github.com/treeverse/lakefs/pkg/stats"
 	"github.com/treeverse/lakefs/pkg/upload"
@@ -72,6 +75,9 @@ func Serve(
 	oidcConfig := auth.OIDCConfig(cfg.AuthConfig().GetBaseAuthConfig().OIDC)
 	cookieAuthConfig := auth.CookieAuthConfig(cfg.AuthConfig().GetBaseAuthConfig().CookieAuthVerification)
 	r := chi.NewRouter()
+	// Modified by KAOS: the KAOS console reads this API from the browser with a bearer token, GET
+	// only, from the origins in kaos.ui.cors_origins (pkg/kaos/cors, PRD novelcore/kaos#1283).
+	r.Use(cors.Middleware(cfg.GetBaseConfig().KAOS.UI.CORSOrigins, apiutil.BaseURL+"/"))
 	apiRouter := r.With(
 		OapiRequestValidatorWithOptions(swagger, &openapi3filter.Options{
 			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
@@ -124,10 +130,23 @@ func Serve(
 		if ns := cfg.GetBaseConfig().KAOS.Catalog.Namespaces; len(ns) > 0 {
 			r.Method(http.MethodGet, "/kaos/v1/catalog", datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns})
 		}
+		// What is staged on MeluXina: the stager's pods post a snapshot, signed-in people read it
+		// (pkg/kaos/meluxina, PRD novelcore/kaos#1283 F-10).
+		if ns, svc := cfg.GetBaseConfig().KAOS.Meluxina.Namespaces, meluxina.Active(); len(ns) > 0 && svc != nil {
+			h := meluxina.Handler{Service: svc, Verify: wl.Namespace, Namespaces: ns}
+			authMW, err := GenericAuthMiddleware(logger, authenticator, authService, &oidcConfig, &cookieAuthConfig)
+			if err != nil {
+				panic(err)
+			}
+			r.Post("/kaos/v1/meluxina/snapshot", h.Post)
+			r.With(authMW).Get("/kaos/v1/meluxina", h.Get)
+		}
 	}
 	// Modified by KAOS: dataset templates for the UI and the CLI (pkg/kaos/templates, PRD
 	// novelcore/kaos#1283 F-04/F-05). They render files; the caller commits them as itself.
 	th := templates.Handler{StorageNamespacePrefix: cfg.GetBaseConfig().KAOS.Repositories.StorageNamespacePrefix}
+	// The header's link back to the KAOS console (kaos.ui.console_url).
+	r.Method(http.MethodGet, "/kaos/v1/ui", uiconfig.Handler{ConsoleURL: cfg.GetBaseConfig().KAOS.UI.ConsoleURL})
 	r.Get("/kaos/v1/dataset-templates", th.List)
 	r.Post("/kaos/v1/dataset-templates/{name}/render", th.Render)
 	r.Post("/kaos/v1/dataset-templates/{name}/parse", th.Parse)

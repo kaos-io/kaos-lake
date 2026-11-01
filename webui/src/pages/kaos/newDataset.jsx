@@ -10,8 +10,10 @@ import Form from 'react-bootstrap/Form';
 import InputGroup from 'react-bootstrap/InputGroup';
 
 import { AlertError, Loading } from '../../lib/components/controls';
+import { Link } from '../../lib/components/nav';
 import { useRouter } from '../../lib/hooks/router';
 import { DATASET_PREFIX, createDataset, listTemplates } from '../../lib/kaos/api';
+import { datasetHref } from '../../lib/kaos/pipeline';
 
 const NAME_REST = /^[a-z0-9][a-z0-9-]{2,47}$/;
 
@@ -33,7 +35,7 @@ const NewDatasetPage = () => {
     const [error, setError] = useState(null);
     const [rest, setRest] = useState('');
     const [description, setDescription] = useState('');
-    const [template, setTemplate] = useState('yolo');
+    const [template, setTemplate] = useState('ultralytics');
     const [values, setValues] = useState({});
     const [step, setStep] = useState('');
 
@@ -53,7 +55,8 @@ const NewDatasetPage = () => {
                 { name, description, template: chosen.name, values, storagePrefix: catalog.storage_namespace_prefix },
                 setStep,
             );
-            router.push({ pathname: '/repositories/:repoId/objects', params: { repoId: name } });
+            // Land on the dataset, with the next steps (add data, release a version).
+            router.push(datasetHref(name, { created: '1' }));
         } catch (err) {
             setError(err);
             setStep('');
@@ -61,7 +64,14 @@ const NewDatasetPage = () => {
     };
     return (
         <Container fluid="md" className="mt-3">
+            <div className="mb-2">
+                <Link href={{ pathname: '/datasets' }}>← All datasets</Link>
+            </div>
             <h3>New dataset</h3>
+            <p className="text-muted">
+                Pick a template and a name. The dataset is created as you, with the template&apos;s folders; then you
+                add your data and release a version.
+            </p>
             {!catalog.storage_namespace_prefix && (
                 <AlertError error="This lakeFS has no storage for new datasets (kaos.repositories.storage_namespace_prefix)." />
             )}

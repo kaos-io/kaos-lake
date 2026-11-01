@@ -26,6 +26,19 @@ import (
 //go:embed defs
 var defs embed.FS
 
+// aliases keep old template names working: "yolo" was renamed "ultralytics" because the format is
+// Ultralytics' (callers and datasets labelled kaos.template=yolo keep working).
+var aliases = map[string]string{"yolo": "ultralytics"}
+
+// Canonical returns the current name of the template called name (an alias resolves, any other
+// name is returned as it is).
+func Canonical(name string) string {
+	if c, ok := aliases[name]; ok {
+		return c
+	}
+	return name
+}
+
 var ErrInvalid = errors.New("invalid dataset template values")
 
 // Field is one input of a template's form.
@@ -70,9 +83,10 @@ func All() ([]Template, error) {
 	return out, nil
 }
 
-// Get returns the template called name.
+// Get returns the template called name, or the one an alias names.
 func Get(name string) (Template, error) {
 	var t Template
+	name = Canonical(name)
 	data, err := defs.ReadFile(path.Join("defs", name, "template.json"))
 	if errors.Is(err, fs.ErrNotExist) || strings.ContainsAny(name, "/.") {
 		return t, fmt.Errorf("%w: no template %q", ErrInvalid, name)
@@ -108,7 +122,7 @@ func Render(tmpl, name, description string, values map[string]any) ([]File, erro
 			out = append(out, File{Path: p})
 			continue
 		}
-		src, err := defs.ReadFile(path.Join("defs", tmpl, p))
+		src, err := defs.ReadFile(path.Join("defs", t.Name, p))
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +187,7 @@ func value(f Field, raw any) (any, error) {
 	}
 }
 
-// Parse reads a dataset's form file back into form values, for editing. Only the YOLO template
+// Parse reads a dataset's form file back into form values, for editing. Only the Ultralytics template
 // has a form file today: its classes are data.yaml's names, as a list or as {id: name}.
 func Parse(tmpl, content string) (map[string]any, error) {
 	t, err := Get(tmpl)

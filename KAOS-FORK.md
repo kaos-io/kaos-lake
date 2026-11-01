@@ -156,3 +156,58 @@ To release, open a pull request that bumps `kaos/VERSION`.
   buffered every upload in memory (1 GiB object: 2.8 GB RSS); `pkg/api/serve.go` gives the
   validator a body-less copy of such requests, so uploads stream as before (1 GiB: ~120 MB).
   `go.sum` is exempt from the modification-notice check (generated; `go.mod` carries the notice).
+- **Per-app rights** (PRD novelcore/kaos#1283 F-08, D-04). Declared app users no longer join
+  Developers. Each `kaos-app-<app>` has its own policy `KAOSApp-<app>`: read (`fs:Read*`,
+  `fs:List*`) on every `dataset-*`; read, write, commit, branch and tag on its own
+  `outputs_repository` (never repository deletion or settings); and read/write on
+  `kaos.repositories.legacy_repository`, the project repository apps created before outputs
+  repositories still write to (empty: none). The reconcile creates, updates and attaches the
+  policy, detaches anything else from the user, and deletes `KAOSApp-*` policies of apps that are
+  no longer declared. Users without the `kaos-app-` prefix are never touched. Code:
+  `pkg/auth/declared/policy.go`.
+- **Template `ultralytics`** (PRD novelcore/kaos#1283 F-04). The `yolo` dataset template is now
+  `ultralytics` (the format is Ultralytics'); `yolo` stays an alias in render, parse and the
+  template endpoints. New datasets are labelled `kaos.template=ultralytics`; the UI treats both.
+- **MeluXina staging view** (PRD novelcore/kaos#1283 F-10, D-08). With workload identity on and
+  `kaos.meluxina.namespaces` set, pods of those namespaces `POST /kaos/v1/meluxina/snapshot` the
+  stager's report by service-account token: `taken_at`, `space` (`used_bytes`, `limit_bytes`,
+  `free_bytes`, `used_files`, `limit_files`; null = unlimited or unreadable), `staged` (`repo`,
+  `commit`, `ref`, `files`, `bytes`, `staged_at`, `last_used`, `leased`; null allowed except
+  repo and commit), `retention`, `last_error`. Bodies over 2 MiB, more than 5000 staged versions
+  and malformed values are refused with the rule named. A failed run (an error and no data) keeps
+  the previous good `staged`/`space`/`retention` and records only `last_error` and `taken_at`;
+  `last_success_at` (set by the server) is the time of the last good data. The latest is kept in
+  memory and in the key-value store, and `GET /kaos/v1/meluxina` returns it, with `server_time`,
+  to any signed-in user. The Datasets page has a MeluXina tab: staged versions per dataset (tag
+  names from the dataset's tags, else "untagged"), times, files, size, in-use badge, space bar,
+  retention rule, and alerts (free under 10%, last good data older than 30 minutes, last error).
+  Code: `pkg/kaos/meluxina`, `webui/src/pages/kaos/meluxina.jsx`.
+- **Dataset UX** (PRD novelcore/kaos#1283 F-03/F-07). Each dataset has its own page
+  (`/datasets/<repo>`) and a "How to use in a pipeline" panel with the exact
+  `dataset = <repo>@<version>` string and a copy button per version, with links to the version's
+  data, commit and tags; "Open pull requests" per dataset; after New dataset the dataset page shows
+  next steps (add data through a branch and pull request or `kubecore dataset push`, then release a
+  version); after Edit the dialog links to the pull request; repository pages of datasets and
+  outputs show a strip (outputs: the app and its model/run folders). `kaos.ui.console_url` adds
+  a link back to the KAOS console in the top bar (`GET /kaos/v1/ui`).
+- **Unknown `kaos.*` keys** do not stop the server: config is decoded exactly, but the `kaos`
+  block collects keys it does not know instead of failing, so a newer chart cannot break an older
+  image.
+- **CORS for the KAOS console** (PRD novelcore/kaos#1283). `kaos.ui.cors_origins` lists exact
+  origins (`https://<org>.console.<domain>`); empty: off. For those origins only, `/api/v1/` answers
+  a GET preflight with 204 without authentication (`Allow-Origin` echoed, never `*`, methods
+  `GET, OPTIONS`, headers `Authorization, Content-Type, Accept`, max age 600) and adds
+  `Access-Control-Allow-Origin` and `Vary: Origin` to GET responses. Any other method or origin gets
+  no CORS headers, and `Access-Control-Allow-Credentials` is never sent, so the session cookie is
+  unusable cross-origin. Code: `pkg/kaos/cors`. lakeFS 1.86's repository list does not carry
+  repository metadata (the `Repository` schema has no such field), so clients read
+  `/repositories/{repo}/metadata` per repository.
+- **A dataset's main changes only through pull requests** (PRD novelcore/kaos#1283). The
+  repositories reconcile gives `main` of every repository labelled `kaos.kind=dataset` lakeFS's
+  branch protection rule blocking `staging_write` and `commit`; a merge still lands. It keys off the
+  label (set last by the New dataset flow, after the first commit to main, so that commit is not
+  blocked), adds only what is missing, re-applies a deleted rule on the next pass (every
+  `kaos.repositories.interval`), and never removes protection, so a dataset that loses its label
+  stays protected. Outputs repositories are not protected. Editors (Developers) lack
+  `branches:SetBranchProtectionRules`, so only Admins change rules. Between a dataset's label and the
+  next pass main is open for up to one interval. Code: `pkg/kaos/repos/protect.go`.

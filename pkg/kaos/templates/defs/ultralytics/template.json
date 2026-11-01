@@ -1,6 +1,6 @@
 {
-  "name": "yolo",
-  "title": "YOLO object detection",
+  "name": "ultralytics",
+  "title": "Ultralytics (YOLO object detection)",
   "description": "Images and YOLO label files split into train, val and test, with the data.yaml Ultralytics reads.",
   "fields": [
     {"key": "classes", "label": "Class names", "type": "list", "required": true,
