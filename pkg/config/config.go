@@ -582,6 +582,12 @@ type BaseConfig struct {
 		// Repositories keeps the platform's repositories in place (pkg/kaos/repos, PRD
 		// novelcore/kaos#1283 F-01): DefaultDataset and each declared app's outputs repository,
 		// created under StorageNamespacePrefix. Empty StorageNamespacePrefix: off.
+		// Catalog serves the datasets read-only to pods of these namespaces, by their
+		// service-account token (pkg/kaos/datacatalog, PRD novelcore/kaos#1283 D-05). Needs
+		// WorkloadIdentity. Empty: off.
+		Catalog struct {
+			Namespaces []string `mapstructure:"namespaces"`
+		} `mapstructure:"catalog"`
 		Repositories struct {
 			StorageNamespacePrefix string `mapstructure:"storage_namespace_prefix"`
 			StorageID              string `mapstructure:"storage_id"`

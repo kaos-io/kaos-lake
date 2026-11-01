@@ -187,3 +187,18 @@ func TestNewWorkload(t *testing.T) {
 	_, err = NewWorkload(config.KAOSWorkloadIdentity{Audience: workloadAudience}, svc, nil)
 	require.Error(t, err)
 }
+
+// PRD novelcore/kaos#1283 D-05: the catalog accepts a pod token from the project's namespaces
+// only, any service account, and acts as no user.
+func TestWorkload_Namespace(t *testing.T) {
+	is := newIssuer(t)
+	w, _ := newWorkload(t, is)
+	ns := []string{"vision-ci", "vision-ml"}
+	got, err := w.Namespace(t.Context(), podToken(t, is, "vision-ci", "operate-workflow-sa", nil), ns)
+	require.NoError(t, err)
+	require.Equal(t, "vision-ci", got)
+	_, err = w.Namespace(t.Context(), podToken(t, is, "other-tenant", "default", nil), ns)
+	require.ErrorIs(t, err, ErrDenied)
+	_, err = w.Namespace(t.Context(), "not-a-token", ns)
+	require.ErrorIs(t, err, ErrDenied)
+}
