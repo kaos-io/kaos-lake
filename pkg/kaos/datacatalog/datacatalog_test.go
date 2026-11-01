@@ -37,7 +37,9 @@ func (fake) ListTags(_ context.Context, r, _ string, _ int, _ string) ([]*catalo
 	}
 	return []*catalog.Tag{{ID: "v2", CommitID: "c2"}, {ID: "v10", CommitID: "c10"}, {ID: "vnext", CommitID: "x"}}, false, nil
 }
-func (fake) GetBranchReference(_ context.Context, r, b string) (string, error) { return "head-" + r, nil }
+func (fake) GetBranchReference(_ context.Context, r, b string) (string, error) {
+	return "head-" + r, nil
+}
 
 func TestList(t *testing.T) {
 	got, err := datacatalog.List(t.Context(), fake{})
