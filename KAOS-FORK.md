@@ -71,7 +71,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `webui/src/pages/kaos`). Repository cards carry a coloured purpose badge (Dataset, Default,
   Outputs · app, Orphaned, Other). The Datasets page lists `dataset-*` repositories with their
   description, template and latest version, with Release version (tags `v1`, `v2`, …). New dataset
-  creates one from a template through the regular API as the signed-in person.
+  creates one from a template through the regular API as the signed-in person. Text files up to
+  1 MiB have Edit; a YOLO dataset's `data.yaml` opens as a class-list form. Saving opens a pull
+  request into main from a draft branch, never a direct write (F-05).
 - **Repositories with a purpose** (PRD novelcore/kaos#1283 F-01/F-02). `kaos.*` repository
   metadata marks a dataset (`dataset-*`) or an ML app's outputs (`outputs-<app>`). With
   `kaos.repositories.storage_namespace_prefix` set, the project's default dataset
