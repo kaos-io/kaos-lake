@@ -583,10 +583,13 @@ type BaseConfig struct {
 		// novelcore/kaos#1283 F-01): DefaultDataset and each declared app's outputs repository,
 		// created under StorageNamespacePrefix. Empty StorageNamespacePrefix: off.
 		Repositories struct {
-			StorageNamespacePrefix string        `mapstructure:"storage_namespace_prefix"`
-			StorageID              string        `mapstructure:"storage_id"`
-			DefaultDataset         string        `mapstructure:"default_dataset"`
-			Interval               time.Duration `mapstructure:"interval"`
+			StorageNamespacePrefix string `mapstructure:"storage_namespace_prefix"`
+			StorageID              string `mapstructure:"storage_id"`
+			DefaultDataset         string `mapstructure:"default_dataset"`
+			// Location labels every repository under the prefix (kaos.location), for example
+			// "europe-west1 · Belgium" (PRD novelcore/kaos#1283 D-10). Empty: no label.
+			Location string        `mapstructure:"location"`
+			Interval time.Duration `mapstructure:"interval"`
 		} `mapstructure:"repositories"`
 	} `mapstructure:"kaos"`
 }

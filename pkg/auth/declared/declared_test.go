@@ -5,6 +5,7 @@ package declared_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -226,4 +227,21 @@ func TestLoad_OutputsRepository(t *testing.T) {
 	write("kaos-app-yolo", "yolo-outputs")
 	_, err = declared.Load(dir)
 	require.ErrorIs(t, err, declared.ErrInvalid)
+}
+
+// PRD novelcore/kaos#1283: editors may label the datasets they create (dataset-*), and nothing else.
+func TestReconcile_EditorsLabelDatasets(t *testing.T) {
+	ctx := t.Context()
+	svc := newStore(t)
+	_, err := declared.Reconcile(ctx, svc, nil, time.Hour)
+	require.NoError(t, err)
+	p, err := svc.GetPolicy(ctx, declared.RepositoryCreatePolicy)
+	require.NoError(t, err)
+	var update []string
+	for _, st := range p.Statement {
+		if slices.Contains(st.Action, "fs:UpdateRepository") {
+			update = append(update, st.Resource)
+		}
+	}
+	require.Equal(t, []string{"arn:lakefs:fs:::repository/dataset-*"}, update)
 }

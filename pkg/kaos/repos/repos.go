@@ -31,6 +31,11 @@ const (
 	KeyTemplate    = "kaos.template"
 	KeyDescription = "kaos.description"
 	KeyOrphaned    = "kaos.orphaned"
+	// KeyLocation is where the repository's storage lives (D-10); set by the platform only.
+	KeyLocation = "kaos.location"
+	// KeySharedWith lists the projects that may read a dataset, comma-separated (D-09). Only the
+	// owning project's admins set it: the API asks for the delete-repository right.
+	KeySharedWith = "kaos.shared_with"
 
 	KindDataset = "dataset"
 	KindOutputs = "outputs"
@@ -41,7 +46,21 @@ const (
 var ErrInvalid = errors.New("invalid repository label")
 
 // platformKeys are written by kaos-lake only: which repositories the platform declared.
-var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned}
+var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation}
+
+// projectName is one KubeProject name in kaos.shared_with.
+var projectName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// SharedWith parses kaos.shared_with into project names; empty items are dropped.
+func SharedWith(value string) []string {
+	var out []string
+	for _, p := range strings.Split(value, ",") {
+		if p = strings.TrimSpace(p); p != "" && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 // nameRest is what follows a purpose prefix (CON-02): 3 to 48 lowercase letters, digits, hyphens.
 var nameRest = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,47}$`)
@@ -59,6 +78,16 @@ func ValidateMetadata(name string, md map[string]string) error {
 	for k := range md {
 		if slices.Contains(platformKeys, k) {
 			return fmt.Errorf("%w: %s is set by the platform only", ErrInvalid, k)
+		}
+	}
+	if v, ok := md[KeySharedWith]; ok {
+		if !ValidName(name, DatasetPrefix) {
+			return fmt.Errorf("%w: only datasets (%s…) are shared", ErrInvalid, DatasetPrefix)
+		}
+		for _, p := range SharedWith(v) {
+			if !projectName.MatchString(p) {
+				return fmt.Errorf("%w: %s: %q is not a project name", ErrInvalid, KeySharedWith, p)
+			}
 		}
 	}
 	kind, ok := md[KeyKind]
@@ -137,7 +166,7 @@ type Catalog interface {
 // Reconcile creates each declared repository that is missing, under storagePrefix, and puts its
 // labels back. An outputs repository no app declares any longer is labelled orphaned and kept: it
 // holds results. It returns a description of each change.
-func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix string, want []Declared) ([]string, error) {
+func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix, location string, want []Declared) ([]string, error) {
 	var changes []string
 	note := func(format string, args ...any) { changes = append(changes, fmt.Sprintf(format, args...)) }
 	declared := map[string]bool{}
@@ -147,7 +176,13 @@ func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix string, 
 			return changes, fmt.Errorf("repository %s: %w", d.Name, err)
 		}
 	}
-	err := forEachOutputs(ctx, c, func(name string) error {
+	if location != "" {
+		if err := labelLocation(ctx, c, storagePrefix, location, note); err != nil {
+			return changes, err
+		}
+	}
+	err := forEachRepository(ctx, c, OutputsPrefix, func(r *catalog.Repository) error {
+		name := r.Name
 		if declared[name] {
 			return nil
 		}
@@ -200,15 +235,34 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 	return nil
 }
 
-func forEachOutputs(ctx context.Context, c Catalog, fn func(name string) error) error {
+// labelLocation labels every repository whose storage is under storagePrefix with location.
+func labelLocation(ctx context.Context, c Catalog, storagePrefix, location string, note func(string, ...any)) error {
+	under := strings.TrimSuffix(storagePrefix, "/") + "/"
+	return forEachRepository(ctx, c, "", func(r *catalog.Repository) error {
+		if !strings.HasPrefix(r.StorageNamespace, under) {
+			return nil
+		}
+		md, err := c.GetRepositoryMetadata(ctx, r.Name)
+		if err != nil || md[KeyLocation] == location {
+			return err
+		}
+		if err := c.UpdateRepositoryMetadata(ctx, r.Name, graveler.RepositoryMetadata{KeyLocation: location}); err != nil {
+			return err
+		}
+		note("labelled %s at %s", r.Name, location)
+		return nil
+	})
+}
+
+func forEachRepository(ctx context.Context, c Catalog, prefix string, fn func(r *catalog.Repository) error) error {
 	after := ""
 	for {
-		page, more, err := c.ListRepositories(ctx, 100, OutputsPrefix, "", after)
+		page, more, err := c.ListRepositories(ctx, 100, prefix, "", after)
 		if err != nil {
 			return err
 		}
 		for _, r := range page {
-			if err := fn(r.Name); err != nil {
+			if err := fn(r); err != nil {
 				return fmt.Errorf("repository %s: %w", r.Name, err)
 			}
 			after = r.Name
@@ -221,13 +275,13 @@ func forEachOutputs(ctx context.Context, c Catalog, fn func(name string) error) 
 
 // Run reconciles the declared repositories now and every interval until ctx ends. outputs returns
 // each declared app's outputs repository, by app name.
-func Run(ctx context.Context, c Catalog, storageID, storagePrefix, defaultDataset string,
+func Run(ctx context.Context, c Catalog, storageID, storagePrefix, location, defaultDataset string,
 	outputs func() map[string]string, interval time.Duration, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		changes, err := Reconcile(ctx, c, storageID, storagePrefix, Desired(defaultDataset, outputs()))
+		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, Desired(defaultDataset, outputs()))
 		for _, ch := range changes {
 			log.Info(ch)
 		}

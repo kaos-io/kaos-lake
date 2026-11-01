@@ -83,7 +83,7 @@ var want = repos.Desired("dataset-default", map[string]string{"yolo": "outputs-y
 // AC-01: a new project gets its default dataset and one outputs repository per app, labelled.
 func TestReconcile_CreatesAndLabelsTheDeclaredRepositories(t *testing.T) {
 	f := newFake()
-	changes, err := repos.Reconcile(t.Context(), f, "", prefix, want)
+	changes, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.NoError(t, err)
 	require.Equal(t, []string{"dataset-default", "outputs-hera", "outputs-yolo"}, f.created)
 	require.Equal(t, "gs://kaos-e2e-lakefs/outputs-yolo", f.repos["outputs-yolo"].StorageNamespace)
@@ -92,7 +92,7 @@ func TestReconcile_CreatesAndLabelsTheDeclaredRepositories(t *testing.T) {
 	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "outputs", repos.KeyApp: "yolo"}, f.md["outputs-yolo"])
 	require.NotEmpty(t, changes)
 
-	again, err := repos.Reconcile(t.Context(), f, "", prefix, want)
+	again, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.NoError(t, err)
 	require.Empty(t, again, "a second pass changes nothing")
 }
@@ -102,7 +102,7 @@ func TestReconcile_CreatesAndLabelsTheDeclaredRepositories(t *testing.T) {
 func TestReconcile_Repairs(t *testing.T) {
 	f := newFake()
 	f.add("dataset-default", map[string]string{repos.KeyDescription: "our data"})
-	_, err := repos.Reconcile(t.Context(), f, "", prefix, want)
+	_, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.NoError(t, err)
 	require.NotContains(t, f.created, "dataset-default", "an existing repository is never recreated")
 	require.Equal(t, "our data", f.md["dataset-default"][repos.KeyDescription])
@@ -115,14 +115,14 @@ func TestReconcile_KeepsAndLabelsOrphanedOutputs(t *testing.T) {
 	f := newFake()
 	f.add("outputs-old", map[string]string{repos.KeyKind: "outputs", repos.KeyApp: "old"})
 	f.add("outputs-handmade", nil) // not the platform's: left alone
-	_, err := repos.Reconcile(t.Context(), f, "", prefix, want)
+	_, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.NoError(t, err)
 	require.Contains(t, f.repos, "outputs-old")
 	require.Equal(t, "true", f.md["outputs-old"][repos.KeyOrphaned])
 	require.Empty(t, f.md["outputs-handmade"])
 
 	back := repos.Desired("dataset-default", map[string]string{"old": "outputs-old"})
-	_, err = repos.Reconcile(t.Context(), f, "", prefix, back)
+	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", back)
 	require.NoError(t, err)
 	require.NotContains(t, f.md["outputs-old"], repos.KeyOrphaned)
 }
@@ -155,4 +155,34 @@ func TestValidateMetadata(t *testing.T) {
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyKind}), repos.ErrInvalid)
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyOrphaned}), repos.ErrInvalid)
 	require.NoError(t, repos.ValidateDelete([]string{repos.KeyDescription}))
+}
+
+// F-13 / AC-12: every repository whose storage is under the prefix carries the location; others
+// (another bucket) are left alone; people cannot set it.
+func TestReconcile_LabelsLocation(t *testing.T) {
+	f := newFake()
+	f.add("dataset-cars", nil)
+	f.repos["dataset-cars"].StorageNamespace = prefix + "dataset-cars"
+	f.add("elsewhere", nil)
+	f.repos["elsewhere"].StorageNamespace = "gs://other-bucket/elsewhere"
+	const where = "europe-west1 · Belgium"
+	_, err := repos.Reconcile(t.Context(), f, "", prefix, where, want)
+	require.NoError(t, err)
+	for _, name := range []string{"dataset-cars", "dataset-default", "outputs-yolo", "outputs-hera"} {
+		require.Equal(t, where, f.md[name][repos.KeyLocation], name)
+	}
+	require.Empty(t, f.md["elsewhere"][repos.KeyLocation])
+	require.ErrorIs(t, repos.ValidateMetadata("dataset-cars", map[string]string{repos.KeyLocation: "Mars"}), repos.ErrInvalid)
+}
+
+// D-09: kaos.shared_with lists project names, on datasets only.
+func TestValidateMetadata_SharedWith(t *testing.T) {
+	require.NoError(t, repos.ValidateMetadata("dataset-cars", map[string]string{repos.KeySharedWith: "orbits, vision-2 ,"}))
+	require.NoError(t, repos.ValidateMetadata("dataset-cars", map[string]string{repos.KeySharedWith: ""}))
+	require.ErrorIs(t, repos.ValidateMetadata("outputs-yolo", map[string]string{repos.KeySharedWith: "orbits"}), repos.ErrInvalid)
+	require.ErrorIs(t, repos.ValidateMetadata("dataset-cars", map[string]string{repos.KeySharedWith: "Orbits"}), repos.ErrInvalid)
+	require.ErrorIs(t, repos.ValidateMetadata("dataset-cars", map[string]string{repos.KeySharedWith: "a/b"}), repos.ErrInvalid)
+	require.Equal(t, []string{"orbits", "vision-2"}, repos.SharedWith(" orbits,vision-2,,orbits "))
+	require.NoError(t, repos.ValidateDelete([]string{repos.KeySharedWith}))
+	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyLocation}), repos.ErrInvalid)
 }
