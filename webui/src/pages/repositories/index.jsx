@@ -19,6 +19,7 @@ import { useAPIWithPagination } from '../../lib/hooks/api';
 import { Paginator } from '../../lib/components/pagination';
 import Container from 'react-bootstrap/Container';
 import { Link } from '../../lib/components/nav';
+import { RepoPurposeBadge } from '../../lib/kaos/purpose';
 import { useRouter } from '../../lib/hooks/router';
 import { useConfigContext } from '../../lib/hooks/configProvider';
 import { ReadOnlyBadge } from '../../lib/components/badges';
@@ -247,6 +248,8 @@ const RepositoryList = ({
                                     </div>
                                     <div className="d-flex align-items-center">
                                         <ReadOnlyBadge readOnly={repo?.read_only} />
+                                        {/* Modified by KAOS: the repository's purpose (PRD novelcore/kaos#1283 F-03). */}
+                                        <RepoPurposeBadge repoId={repo.id} />
                                     </div>
                                 </div>
 
