@@ -618,6 +618,11 @@ type KAOSTokenIdentity struct {
 		Claim string `mapstructure:"claim"`
 		Group string `mapstructure:"group"`
 	} `mapstructure:"groups"`
+	// Project is this lakeFS's own project. A groups-claim value <prefix><project>:<role> for
+	// another project, with a prefix from ConsumerClaimPrefixes, makes the caller a consumer of the
+	// datasets shared with that project (PRD novelcore/kaos#1283 F-12).
+	Project               string   `mapstructure:"project"`
+	ConsumerClaimPrefixes []string `mapstructure:"consumer_claim_prefixes"`
 }
 
 // KAOSBrowserLogin configures the browser login of pkg/auth/tokenid. Modified by KAOS (PRD

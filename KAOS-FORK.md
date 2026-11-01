@@ -84,6 +84,11 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `kaos.location` (a platform key). `kaos.shared_with` (projects that may read a dataset) is
   validated and needs the delete-repository right, so only the project's admins share. Editors
   (Developers) may update `dataset-*` repositories so they can label the datasets they create.
+  Each project named in a dataset's `kaos.shared_with` gets a group `kaos-consumer-<project>`
+  with a read-only policy over exactly the datasets shared with it, removed when nothing is
+  shared any more. With `kaos.token_identity.project` and `consumer_claim_prefixes` set, a token
+  whose role claims name another project of the organisation joins that project's group while it
+  exists (F-12). The web UI shows location and sharing badges and a Share form on each dataset.
 - **Dataset templates** (PRD novelcore/kaos#1283 F-04/F-05). `pkg/kaos/templates` embeds the
   templates (YOLO, Empty) and serves `GET /kaos/v1/dataset-templates`,
   `POST /kaos/v1/dataset-templates/{name}/render` (form values → a new dataset's files) and

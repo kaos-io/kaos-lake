@@ -9,11 +9,58 @@ import Container from 'react-bootstrap/Container';
 
 import { AlertError, Loading } from '../../lib/components/controls';
 import { Link } from '../../lib/components/nav';
-import { DATASET_PREFIX, listByPrefix, listVersions, releaseVersion } from '../../lib/kaos/api';
+import Form from 'react-bootstrap/Form';
+import InputGroup from 'react-bootstrap/InputGroup';
+
+import { DATASET_PREFIX, listByPrefix, listVersions, releaseVersion, setRepoMetadata } from '../../lib/kaos/api';
 import { PurposeBadge, useRepoLabels } from '../../lib/kaos/purpose';
 
+/** Share a dataset with other projects of the organisation (D-09); only the project's admins may. */
+const ShareForm = ({ repoId, labels, onDone }) => {
+    const [value, setValue] = useState(labels['kaos.shared_with'] || '');
+    const [error, setError] = useState(null);
+    const [saving, setSaving] = useState(false);
+    const save = async (e) => {
+        e.preventDefault();
+        setSaving(true);
+        setError(null);
+        try {
+            const projects = value
+                .split(',')
+                .map((p) => p.trim())
+                .filter(Boolean)
+                .join(',');
+            await setRepoMetadata(repoId, { 'kaos.shared_with': projects });
+            onDone();
+        } catch (err) {
+            setError(err);
+        } finally {
+            setSaving(false);
+        }
+    };
+    return (
+        <Form onSubmit={save} className="mt-2">
+            <InputGroup size="sm">
+                <InputGroup.Text>Share with projects</InputGroup.Text>
+                <Form.Control value={value} placeholder="orbits, vision" onChange={(e) => setValue(e.target.value)} />
+                <Button type="submit" size="sm" variant="success" disabled={saving}>
+                    {saving ? 'Saving…' : 'Save'}
+                </Button>
+            </InputGroup>
+            <Form.Text muted>
+                Read-only for those projects, in this organisation. The data stays where it is
+                {labels['kaos.location'] ? ` (${labels['kaos.location']})` : ''}; they read it from there. Empty stops
+                sharing.
+            </Form.Text>
+            {error && <AlertError className="mt-2" error={error} onDismiss={() => setError(null)} />}
+        </Form>
+    );
+};
+
 const DatasetCard = ({ repo }) => {
-    const labels = useRepoLabels(repo.id);
+    const [refresh, setRefresh] = useState(0);
+    const labels = useRepoLabels(repo.id, refresh);
+    const [sharing, setSharing] = useState(false);
     const [versions, setVersions] = useState(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
@@ -59,16 +106,31 @@ const DatasetCard = ({ repo }) => {
                                   : 'No version released yet'}
                         </div>
                     </div>
-                    <Button
-                        size="sm"
-                        variant="outline-success"
-                        disabled={busy}
-                        onClick={release}
-                        title="Tag main's head as the next version; pipelines can then pick it"
-                    >
-                        {busy ? 'Releasing…' : 'Release version'}
-                    </Button>
+                    <div className="d-flex gap-2">
+                        <Button size="sm" variant="outline-secondary" onClick={() => setSharing(!sharing)}>
+                            Share
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="outline-success"
+                            disabled={busy}
+                            onClick={release}
+                            title="Tag main's head as the next version; pipelines can then pick it"
+                        >
+                            {busy ? 'Releasing…' : 'Release version'}
+                        </Button>
+                    </div>
                 </div>
+                {sharing && (
+                    <ShareForm
+                        repoId={repo.id}
+                        labels={labels}
+                        onDone={() => {
+                            setSharing(false);
+                            setRefresh(refresh + 1);
+                        }}
+                    />
+                )}
                 {released && <div className="small text-success mt-2">Released {released}.</div>}
                 {error && <AlertError className="mt-2" error={error} onDismiss={() => setError(null)} />}
             </Card.Body>
