@@ -211,3 +211,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
   stays protected. Outputs repositories are not protected. Editors (Developers) lack
   `branches:SetBranchProtectionRules`, so only Admins change rules. Between a dataset's label and the
   next pass main is open for up to one interval. Code: `pkg/kaos/repos/protect.go`.
+- **Templates are optional: a `dataset-*` repository made by hand is a dataset** (PRD
+  novelcore/kaos#1283, owner 2026-11-01). The repositories reconcile labels `kaos.kind=dataset` on
+  any validly named `dataset-*` repository without a kind, made with lakeFS's own Create repository,
+  the API or the kubecore package, once its default branch has a commit of its own. So, as with
+  the New dataset flow, the first upload straight to main goes through, and only then does the
+  repository show on the Datasets page and in the pipeline dropdown and get main's protection.
+  People's own labels stay; it never sets `kaos.template`. Code: `pkg/kaos/repos/repos.go`.

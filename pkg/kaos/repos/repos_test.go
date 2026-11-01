@@ -19,10 +19,11 @@ type fakeCatalog struct {
 	repos   map[string]*catalog.Repository
 	md      map[string]graveler.RepositoryMetadata
 	created []string
+	empty   map[string]bool // repositories whose default branch has only the initial commit
 }
 
 func newFake() *fakeCatalog {
-	return &fakeCatalog{repos: map[string]*catalog.Repository{}, md: map[string]graveler.RepositoryMetadata{}}
+	return &fakeCatalog{repos: map[string]*catalog.Repository{}, md: map[string]graveler.RepositoryMetadata{}, empty: map[string]bool{}}
 }
 
 func (f *fakeCatalog) add(name string, md map[string]string) {
@@ -41,6 +42,16 @@ func (f *fakeCatalog) CreateRepository(_ context.Context, name, storageID, ns, b
 	r := &catalog.Repository{Name: name, StorageID: storageID, StorageNamespace: ns, DefaultBranch: branch}
 	f.repos[name], f.created = r, append(f.created, name)
 	return r, nil
+}
+
+func (f *fakeCatalog) GetCommit(_ context.Context, name, _ string) (*catalog.CommitLog, error) {
+	if _, ok := f.repos[name]; !ok {
+		return nil, graveler.ErrRepositoryNotFound
+	}
+	if f.empty[name] {
+		return &catalog.CommitLog{}, nil
+	}
+	return &catalog.CommitLog{Parents: []string{"initial"}}, nil
 }
 
 func (f *fakeCatalog) GetRepositoryMetadata(_ context.Context, name string) (graveler.RepositoryMetadata, error) {
@@ -185,4 +196,36 @@ func TestValidateMetadata_SharedWith(t *testing.T) {
 	require.Equal(t, []string{"orbits", "vision-2"}, repos.SharedWith(" orbits,vision-2,,orbits "))
 	require.NoError(t, repos.ValidateDelete([]string{repos.KeySharedWith}))
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyLocation}), repos.ErrInvalid)
+}
+
+// PRD novelcore/kaos#1283 (owner 2026-11-01): templates are optional. A dataset-* repository made
+// by hand gets kaos.kind=dataset; its own labels stay; a name that is not a valid dataset name, a
+// repository already labelled and any other repository are left alone.
+func TestReconcile_LabelsHandmadeDatasets(t *testing.T) {
+	f := newFake()
+	f.add("dataset-cars", nil)
+	f.add("dataset-trucks", map[string]string{repos.KeyDescription: "ours"})
+	f.add("dataset-ab", nil)
+	f.add("dataset-made", map[string]string{repos.KeyKind: repos.KindDataset, repos.KeyTemplate: "ultralytics"})
+	f.add("scratch", nil)
+	f.add("dataset-fresh", nil)
+	f.empty["dataset-fresh"] = true
+	changes, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Equal(t, repos.KindDataset, f.md["dataset-cars"][repos.KeyKind])
+	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: repos.KindDataset, repos.KeyDescription: "ours"}, f.md["dataset-trucks"])
+	require.Empty(t, f.md["dataset-ab"])
+	require.Equal(t, "ultralytics", f.md["dataset-made"][repos.KeyTemplate])
+	require.Empty(t, f.md["scratch"])
+	require.Empty(t, f.md["dataset-fresh"], "an empty repository is labelled only after its first commit")
+	require.Contains(t, changes, "labelled dataset-cars a dataset: made without a template")
+
+	again, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Empty(t, again, "a second pass changes nothing")
+
+	f.empty["dataset-fresh"] = false // someone uploaded and committed
+	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Equal(t, repos.KindDataset, f.md["dataset-fresh"][repos.KeyKind])
 }
