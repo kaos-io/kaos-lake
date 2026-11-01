@@ -67,6 +67,12 @@ To release, open a pull request that bumps `kaos/VERSION`.
 - **No Enterprise upsell in the web UI.** The top bar has no Datasets link and `/datasets` goes to
   the repositories; a repository has no Objects/Tables toggle. Upstream's Datasets and Tables pages
   only advertised lakeFS Enterprise ("Book a demo").
+- **Repositories with a purpose** (PRD novelcore/kaos#1283 F-01/F-02). `kaos.*` repository
+  metadata marks a dataset (`dataset-*`) or an ML app's outputs (`outputs-<app>`). With
+  `kaos.repositories.storage_namespace_prefix` set, the project's default dataset
+  (`kaos.repositories.default_dataset`) and each declared app's `outputs_repository` are created
+  and relabelled every `kaos.repositories.interval`; an undeclared outputs repository is labelled
+  `kaos.orphaned` and never deleted. The metadata API refuses labels that break the naming rules.
 - **Multi-user auth mode** (PRD novelcore/kaos#1217 F-02). `auth.ui_config.rbac: internal` with no
   `auth.api.endpoint` runs the v1.86 key-value auth store (`contrib/auth/acl`) inside the server, in
   lakeFS's own database: users, groups and policies through the standard auth API and UI, evaluated
