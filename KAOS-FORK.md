@@ -64,6 +64,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
 
 - **No phone-home by default.** `stats.enabled`, `security.check_latest_version` are `false`
   and `security.audit_check_url` is empty (the audit check is off). Each can be set again.
+- **No Enterprise upsell in the web UI.** The top bar has no Datasets link and `/datasets` goes to
+  the repositories; a repository has no Objects/Tables toggle. Upstream's Datasets and Tables pages
+  only advertised lakeFS Enterprise ("Book a demo").
 - **Multi-user auth mode** (PRD novelcore/kaos#1217 F-02). `auth.ui_config.rbac: internal` with no
   `auth.api.endpoint` runs the v1.86 key-value auth store (`contrib/auth/acl`) inside the server, in
   lakeFS's own database: users, groups and policies through the standard auth API and UI, evaluated

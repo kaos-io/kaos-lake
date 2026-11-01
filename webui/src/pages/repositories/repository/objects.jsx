@@ -11,10 +11,7 @@ import {
     GitCommitIcon,
     HistoryIcon,
     NorthStarIcon,
-    FileDirectoryIcon,
-    TableIcon,
 } from '@primer/octicons-react';
-import Nav from 'react-bootstrap/Nav';
 import RefDropdown from '../../../lib/components/repository/refDropdown';
 import {
     ActionGroup,
@@ -1232,30 +1229,7 @@ const NoGCRulesWarning = ({ repoId }) => {
     return <></>;
 };
 
-const DataViewToggle = ({ activeView, onChangeView }) => {
-    return (
-        <Nav variant="pills" className="data-view-toggle">
-            <Nav.Item>
-                <Nav.Link
-                    active={activeView === DATA_VIEW_OBJECTS}
-                    onClick={() => onChangeView(DATA_VIEW_OBJECTS)}
-                    className="d-flex align-items-center gap-1"
-                >
-                    <FileDirectoryIcon size={16} /> Objects
-                </Nav.Link>
-            </Nav.Item>
-            <Nav.Item>
-                <Nav.Link
-                    active={activeView === DATA_VIEW_TABLES}
-                    onClick={() => onChangeView(DATA_VIEW_TABLES)}
-                    className="d-flex align-items-center gap-1"
-                >
-                    <TableIcon size={16} /> Tables
-                </Nav.Link>
-            </Nav.Item>
-        </Nav>
-    );
-};
+// Modified by KAOS: no Objects/Tables toggle; upstream's Tables view is an Enterprise-only page.
 
 const ObjectsBrowser = ({ storageConfig }) => {
     const router = useRouter();
@@ -1265,7 +1239,7 @@ const ObjectsBrowser = ({ storageConfig }) => {
     const [showUpload, setShowUpload] = useState(false);
     const [showImport, setShowImport] = useState(false);
     const [refreshToken, setRefreshToken] = useState(false);
-    const [dataView, setDataView] = useState(DATA_VIEW_OBJECTS);
+    const [dataView] = useState(DATA_VIEW_OBJECTS);
     const [showChangesOnly, setShowChangesOnly] = useState(showChanges === 'true');
     const [actionError, setActionError] = useState(null);
     const [hasChanges, setHasChanges] = useState(false);
@@ -1450,7 +1424,6 @@ const ObjectsBrowser = ({ storageConfig }) => {
 
             {/* Row 2: View Toggle & Data Actions */}
             <div className="data-view-row d-flex align-items-center mb-2">
-                <DataViewToggle activeView={dataView} onChangeView={setDataView} />
                 <div className="d-flex align-items-center gap-2 ms-auto">
                     {dataView === DATA_VIEW_OBJECTS && (
                         <>
