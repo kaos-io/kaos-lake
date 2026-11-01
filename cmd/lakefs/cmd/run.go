@@ -35,6 +35,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/gateway/sig"
 	"github.com/treeverse/lakefs/pkg/graveler/ref"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/repos"
 	"github.com/treeverse/lakefs/pkg/kv"
 	_ "github.com/treeverse/lakefs/pkg/kv/cosmosdb"
 	_ "github.com/treeverse/lakefs/pkg/kv/dynamodb"
@@ -194,6 +195,13 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("failed to create catalog")
 		}
 		defer func() { _ = c.Close() }()
+
+		// Modified by KAOS: keep the project's default dataset and each declared app's outputs
+		// repository in place (PRD novelcore/kaos#1283 F-01).
+		if r := baseCfg.KAOS.Repositories; r.StorageNamespacePrefix != "" {
+			go repos.Run(ctx, c, r.StorageID, r.StorageNamespacePrefix, r.DefaultDataset,
+				declaredApps.Outputs, r.Interval, logger)
+		}
 
 		// Setup usage reporter - it is no longer possible to disable it
 		usageReporter := stats.NewUsageReporter(metadata.InstallationID, kvStore)
