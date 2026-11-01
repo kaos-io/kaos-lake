@@ -9,7 +9,7 @@ import { KIND, repoMetadata } from './api';
 export const PURPOSE_COLOURS = { dataset: '#2e7d32', outputs: '#6f42c1', other: '#6c757d' };
 
 /** The repository's kaos.* labels, or {} while loading or when unreadable. */
-export const useRepoLabels = (repoId) => {
+export const useRepoLabels = (repoId, refresh = 0) => {
     const [labels, setLabels] = useState({});
     useEffect(() => {
         let live = true;
@@ -19,7 +19,7 @@ export const useRepoLabels = (repoId) => {
         return () => {
             live = false;
         };
-    }, [repoId]);
+    }, [repoId, refresh]);
     return labels;
 };
 
@@ -35,8 +35,36 @@ const Pill = ({ colour, title, children }) => (
     </Badge>
 );
 
-/** Dataset (green, Default), Outputs (violet, with the app), Orphaned, or Other (grey). */
-export const PurposeBadge = ({ labels }) => {
+/** Where the repository's data lives (kaos.location, set by the platform), and who it is shared with. */
+export const PlaceBadges = ({ labels }) => (
+    <>
+        {labels['kaos.location'] && (
+            <Pill colour="#0b5394" title="Where this repository's data is stored">
+                📍 {labels['kaos.location']}
+            </Pill>
+        )}
+        {labels['kaos.shared_with'] && (
+            <Pill colour="#00796b" title="Projects that may read this dataset">
+                Shared with{' '}
+                {labels['kaos.shared_with']
+                    .split(',')
+                    .map((p) => p.trim())
+                    .filter(Boolean)
+                    .join(', ')}
+            </Pill>
+        )}
+    </>
+);
+
+/** Dataset (green, Default), Outputs (violet, with the app), Orphaned, or Other (grey); then place. */
+export const PurposeBadge = ({ labels }) => (
+    <>
+        <KindBadge labels={labels} />
+        <PlaceBadges labels={labels} />
+    </>
+);
+
+const KindBadge = ({ labels }) => {
     const kind = labels['kaos.kind'];
     if (kind === KIND.dataset) {
         return (

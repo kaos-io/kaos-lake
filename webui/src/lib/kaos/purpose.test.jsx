@@ -38,3 +38,19 @@ describe('editFile', () => {
         expect(formFor({ 'kaos.template': 'empty' }, 'data.yaml')).toBe('');
     });
 });
+
+describe('PlaceBadges', () => {
+    it('shows where the data lives and who it is shared with', () => {
+        render(
+            <PurposeBadge
+                labels={{
+                    'kaos.kind': 'dataset',
+                    'kaos.location': 'europe-west1 · Belgium',
+                    'kaos.shared_with': 'orbits, vision',
+                }}
+            />,
+        );
+        expect(screen.getByText('📍 europe-west1 · Belgium')).toBeTruthy();
+        expect(screen.getByText('Shared with orbits, vision')).toBeTruthy();
+    });
+});

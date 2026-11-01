@@ -22,6 +22,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/auth"
 	"github.com/treeverse/lakefs/pkg/auth/model"
 	"github.com/treeverse/lakefs/pkg/config"
+	"github.com/treeverse/lakefs/pkg/kaos/repos"
 )
 
 // cacheTTL bounds how long a verified token's user and groups are reused before the store is
@@ -108,6 +109,13 @@ func (id *Identity) resolve(ctx context.Context, token, extraAudience string) (*
 		return nil, fmt.Errorf("%w: %w: email claim %q", auth.ErrAuthenticatingRequest, ErrDenied, username)
 	}
 	groups := id.groups(claims)
+	// PRD novelcore/kaos#1283 F-12: a caller from another project of the organisation also reads
+	// the datasets shared with its project. Its group exists only while something is shared.
+	for _, g := range id.consumerGroups(claims) {
+		if _, err := id.svc.GetGroup(ctx, g); err == nil && !slices.Contains(groups, g) {
+			groups = append(groups, g)
+		}
+	}
 	if len(groups) == 0 {
 		return nil, fmt.Errorf("%w: %w: %s has no project role here", auth.ErrAuthenticatingRequest, ErrDenied, username)
 	}
@@ -165,6 +173,27 @@ func (id *Identity) groups(claims jwt.MapClaims) []string {
 		}
 	}
 	return groups
+}
+
+// consumerGroups maps the token's claims for other projects to their consumer groups
+// (pkg/kaos/repos ConsumerGroupPrefix): <prefix><project>:<role>, project not this one.
+func (id *Identity) consumerGroups(claims jwt.MapClaims) []string {
+	values, _ := claims[id.cfg.GroupsClaim].([]any)
+	var out []string
+	for _, v := range values {
+		claim, _ := v.(string)
+		for _, prefix := range id.cfg.ConsumerClaimPrefixes {
+			rest, ok := strings.CutPrefix(claim, prefix)
+			project, _, hasRole := strings.Cut(rest, ":")
+			if !ok || !hasRole || project == "" || project == id.cfg.Project {
+				continue
+			}
+			if g := repos.ConsumerGroupPrefix + project; !slices.Contains(out, g) {
+				out = append(out, g)
+			}
+		}
+	}
+	return out
 }
 
 // sync creates the user if needed and makes its groups exactly groups.

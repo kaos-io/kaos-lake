@@ -23,6 +23,7 @@ import (
 	authparams "github.com/treeverse/lakefs/pkg/auth/params"
 	"github.com/treeverse/lakefs/pkg/auth/setup"
 	"github.com/treeverse/lakefs/pkg/config"
+	"github.com/treeverse/lakefs/pkg/kaos/repos"
 	"github.com/treeverse/lakefs/pkg/kv/kvtest"
 	"github.com/treeverse/lakefs/pkg/permissions"
 )
@@ -276,4 +277,34 @@ func TestOwns(t *testing.T) {
 	lakeFSToken, err := auth.GenerateJWTLogin([]byte("secret"), "admin", time.Now(), time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	require.False(t, id.Owns(lakeFSToken), "lakeFS's own login tokens keep the upstream path")
+}
+
+// PRD novelcore/kaos#1283 F-12: a person of another project of the organisation joins its consumer
+// group only while something is shared with that project; this project's own claims never count.
+func TestResolve_ConsumerOfSharedDatasets(t *testing.T) {
+	ctx := t.Context()
+	is := newIssuer(t)
+	id, svc := newIdentity(t, is)
+	id.cfg.Project = "vision"
+	id.cfg.ConsumerClaimPrefixes = []string{"kubeorg:acme:kubeproject:", "kubeproject:"}
+	carol := is.token(t, func(c jwt.MapClaims) {
+		c["email"] = "carol@acme.com"
+		c["groups"] = []string{"kubeorg:acme", "kubeorg:acme:kubeproject:orbits:dev"}
+	})
+
+	_, err := id.Resolve(ctx, carol)
+	require.ErrorIs(t, err, ErrDenied, "nothing shared with orbits: no role here")
+
+	_, err = svc.CreateGroup(ctx, &model.Group{DisplayName: repos.ConsumerGroupPrefix + "orbits", CreatedAt: time.Now()})
+	require.NoError(t, err)
+	id.cache = map[string]cached{}
+	user, err := id.Resolve(ctx, carol)
+	require.NoError(t, err)
+	require.Equal(t, []string{repos.ConsumerGroupPrefix + "orbits"}, groupsOf(t, svc, user.Username))
+
+	require.Empty(t, id.consumerGroups(jwt.MapClaims{"groups": []any{"kubeproject:vision:dev", "kubeorg:acme:kubeproject:vision:admin"}}),
+		"this project is not its own consumer")
+	require.Equal(t, []string{repos.ConsumerGroupPrefix + "orbits"},
+		id.consumerGroups(jwt.MapClaims{"groups": []any{"kubeproject:orbits:admin", "kubeorg:acme:kubeproject:orbits:dev", "kubeproject:orbits"}}),
+		"the machine user's short claim; a claim without a role does not count")
 }

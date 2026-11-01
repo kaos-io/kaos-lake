@@ -275,7 +275,8 @@ func forEachRepository(ctx context.Context, c Catalog, prefix string, fn func(r 
 
 // Run reconciles the declared repositories now and every interval until ctx ends. outputs returns
 // each declared app's outputs repository, by app name.
-func Run(ctx context.Context, c Catalog, storageID, storagePrefix, location, defaultDataset string,
+// svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares).
+func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
 	outputs func() map[string]string, interval time.Duration, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
@@ -287,6 +288,15 @@ func Run(ctx context.Context, c Catalog, storageID, storagePrefix, location, def
 		}
 		if err != nil {
 			log.WithError(err).Error("Declared repositories not applied")
+		}
+		if svc != nil {
+			changes, err := ReconcileShares(ctx, c, svc)
+			for _, ch := range changes {
+				log.Info(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Dataset shares not applied")
+			}
 		}
 		select {
 		case <-ctx.Done():
