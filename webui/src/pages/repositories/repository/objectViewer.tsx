@@ -17,6 +17,8 @@ import { linkToPath } from '../../../lib/api';
 import { getRepoStorageConfig } from './utils';
 
 import '../../../styles/quickstart.css';
+// Modified by KAOS: the edit form (PRD novelcore/kaos#1283 F-05).
+import { EditFileButton } from '../../../lib/kaos/editFile';
 
 type ObjectViewerPathParams = {
     objectName: string;
@@ -147,7 +149,17 @@ export const FileContents: FC<FileContentsProps> = ({
 
     return (
         <Card className={'file-content-card'}>
-            <Card.Header className={'file-content-heading'}>{titleComponent}</Card.Header>
+            <Card.Header className={'file-content-heading'}>
+                {titleComponent}
+                {/* Modified by KAOS: edit text files through a pull request (PRD novelcore/kaos#1283 F-05). */}
+                <EditFileButton
+                    repoId={repoId}
+                    refId={reference.id}
+                    path={path}
+                    sizeBytes={sizeBytes}
+                    contentType={contentType}
+                />
+            </Card.Header>
             <Card.Body className={'file-content-body'}>
                 <Box sx={{ mx: 1 }}>
                     <ObjectRenderer
