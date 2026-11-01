@@ -94,6 +94,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `POST /kaos/v1/dataset-templates/{name}/render` (form values → a new dataset's files) and
   `.../parse` (a dataset's `data.yaml` → form values, for editing). They write nothing: the UI and
   the CLI commit the files with the caller's own identity.
+- **Dataset catalog** (PRD novelcore/kaos#1283 F-07, D-05). With workload identity on and
+  `kaos.catalog.namespaces` set, `GET /kaos/v1/catalog` answers the datasets (name, default,
+  description, location, main's head, `vN` versions newest first) to pods of those namespaces by
+  their service-account token, any account, acting as no user. It never serves data.
 - **Multi-user auth mode** (PRD novelcore/kaos#1217 F-02). `auth.ui_config.rbac: internal` with no
   `auth.api.endpoint` runs the v1.86 key-value auth store (`contrib/auth/acl`) inside the server, in
   lakeFS's own database: users, groups and policies through the standard auth API and UI, evaluated

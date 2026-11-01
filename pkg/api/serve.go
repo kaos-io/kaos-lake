@@ -22,6 +22,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/datacatalog"
 	"github.com/treeverse/lakefs/pkg/kaos/templates"
 	"github.com/treeverse/lakefs/pkg/logging"
 	"github.com/treeverse/lakefs/pkg/stats"
@@ -116,9 +117,13 @@ func Serve(
 		r.Get("/oidc/login", bl.Login)
 		r.Get("/oidc/callback", bl.Callback)
 	}
-	// Modified by KAOS: ML workflow pods exchange their token for an access key (F-05).
+	// Modified by KAOS: ML workflow pods exchange their token for an access key (F-05); the
+	// project's own pods read the dataset catalog (PRD novelcore/kaos#1283 D-05).
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
+		if ns := cfg.GetBaseConfig().KAOS.Catalog.Namespaces; len(ns) > 0 {
+			r.Method(http.MethodGet, "/kaos/v1/catalog", datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns})
+		}
 	}
 	// Modified by KAOS: dataset templates for the UI and the CLI (pkg/kaos/templates, PRD
 	// novelcore/kaos#1283 F-04/F-05). They render files; the caller commits them as itself.

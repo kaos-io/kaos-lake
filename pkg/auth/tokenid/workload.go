@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,6 +80,24 @@ func (w *Workload) Owns(token string) bool {
 
 // Resolve verifies token and returns its app user. Every error denies the request.
 func (w *Workload) Resolve(ctx context.Context, token string) (*model.User, error) {
+	claims, err := w.verify(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	sub, _ := claims.GetSubject()
+	username, ok := w.appUser(sub)
+	if !ok {
+		return nil, fmt.Errorf("%w: %w: %s is not an ML app's workflow here", auth.ErrAuthenticatingRequest, ErrDenied, sub)
+	}
+	user, err := w.svc.GetUser(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w: %s: %w", auth.ErrAuthenticatingRequest, ErrDenied, username, err)
+	}
+	return user, nil
+}
+
+// verify checks token's signature, issuer, audience and expiry. Every error denies.
+func (w *Workload) verify(ctx context.Context, token string) (jwt.MapClaims, error) {
 	claims := jwt.MapClaims{}
 	keyFn := func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
@@ -94,16 +113,22 @@ func (w *Workload) Resolve(ctx context.Context, token string) (*model.User, erro
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w: %w", auth.ErrAuthenticatingRequest, ErrDenied, err)
 	}
-	sub, _ := claims.GetSubject()
-	username, ok := w.appUser(sub)
-	if !ok {
-		return nil, fmt.Errorf("%w: %w: %s is not an ML app's workflow here", auth.ErrAuthenticatingRequest, ErrDenied, sub)
-	}
-	user, err := w.svc.GetUser(ctx, username)
+	return claims, nil
+}
+
+// Namespace verifies token like Resolve and returns its service account's namespace, when that is
+// one of namespaces (PRD novelcore/kaos#1283 D-05: the read-only catalog). It acts as no user.
+func (w *Workload) Namespace(ctx context.Context, token string, namespaces []string) (string, error) {
+	claims, err := w.verify(ctx, token)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w: %s: %w", auth.ErrAuthenticatingRequest, ErrDenied, username, err)
+		return "", err
 	}
-	return user, nil
+	sub, _ := claims.GetSubject()
+	parts := strings.Split(sub, ":")
+	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" || !slices.Contains(namespaces, parts[2]) {
+		return "", fmt.Errorf("%w: %w: %s is not in a namespace of this project", auth.ErrAuthenticatingRequest, ErrDenied, sub)
+	}
+	return parts[2], nil
 }
 
 // appUser maps subject system:serviceaccount:{namespace}:{app}-workflow to kaos-app-{app}, when
