@@ -77,8 +77,9 @@ const NextSteps = ({ repoId, hasVersion }) => (
         <h6 className="mb-2">Your dataset is created. Next:</h6>
         <ol className="mb-0">
             <li className="mb-1">
-                <strong>Add your data.</strong> In the browser:{' '}
-                create a branch on <Link href={branchesHref(repoId)}>the branches page</Link>, upload files to it and open a pull request (main changes only when a pull request is merged). Or from a terminal, with the{' '}
+                <strong>Add your data.</strong> In the browser: create a branch on{' '}
+                <Link href={branchesHref(repoId)}>the branches page</Link>, upload files to it and open a pull request
+                (main changes only when a pull request is merged). Or from a terminal, with the{' '}
                 <a href={CLI_README_URL} target="_blank" rel="noreferrer">
                     kubecore CLI
                 </a>{' '}

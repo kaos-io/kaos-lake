@@ -51,7 +51,7 @@ func TestRender_YOLO(t *testing.T) {
 	require.Equal(t, map[int]string{0: "car", 1: "truck", 2: `bus "double"`}, doc.Names)
 	require.Contains(t, got["README.md"], "# dataset-cars")
 	require.Contains(t, got["README.md"], "Street cars")
-	require.Contains(t, got["README.md"], "--dataset dataset-cars")
+	require.Contains(t, got["README.md"], "kubecore dataset push <folder> dataset-cars")
 }
 
 // The edit form round-trips: what Render writes, Parse reads back; both YOLO name forms parse.
