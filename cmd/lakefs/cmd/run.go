@@ -199,7 +199,7 @@ var runCmd = &cobra.Command{
 		// Modified by KAOS: keep the project's default dataset and each declared app's outputs
 		// repository in place (PRD novelcore/kaos#1283 F-01).
 		if r := baseCfg.KAOS.Repositories; r.StorageNamespacePrefix != "" {
-			go repos.Run(ctx, c, r.StorageID, r.StorageNamespacePrefix, r.DefaultDataset,
+			go repos.Run(ctx, c, r.StorageID, r.StorageNamespacePrefix, r.Location, r.DefaultDataset,
 				declaredApps.Outputs, r.Interval, logger)
 		}
 

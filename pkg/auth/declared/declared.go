@@ -31,7 +31,8 @@ const (
 	// AppGroup is the group app users join: project editors (PRD D-04).
 	AppGroup = setup.DevelopersGroup
 	// RepositoryCreatePolicy lets editors create repositories, which upstream Developers cannot:
-	// project members create repositories by hand (PRD novelcore/kaos#1147). Deletion stays with Admins.
+	// project members create repositories by hand (PRD novelcore/kaos#1147). It also lets them
+	// label the datasets they create (dataset-*, PRD novelcore/kaos#1283). Deletion stays with Admins.
 	RepositoryCreatePolicy = "KAOSRepositoryCreate"
 )
 
@@ -190,6 +191,10 @@ func ensureRepositoryCreate(ctx context.Context, svc auth.Service, note func(str
 			Effect:   model.StatementEffectAllow,
 			Action:   []string{permissions.CreateRepositoryAction, permissions.AttachStorageNamespaceAction},
 			Resource: permissions.All,
+		}, {
+			Effect:   model.StatementEffectAllow,
+			Action:   []string{permissions.UpdateRepositoryAction},
+			Resource: permissions.RepoArn(repos.DatasetPrefix + "*"),
 		}},
 	}
 	existing, err := svc.GetPolicy(ctx, RepositoryCreatePolicy)

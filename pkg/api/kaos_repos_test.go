@@ -44,3 +44,24 @@ func TestController_RepositoryLabels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNoContent, del.StatusCode())
 }
+
+// D-09: an admin shares a dataset with other projects; non-datasets are not shared.
+func TestController_DatasetSharing(t *testing.T) {
+	clt, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	for _, name := range []string{"dataset-shared", "plain-shared"} {
+		resp, err := clt.CreateRepositoryWithResponse(ctx, &apigen.CreateRepositoryParams{}, apigen.CreateRepositoryJSONRequestBody{
+			DefaultBranch: apiutil.Ptr("main"), Name: name, StorageNamespace: onBlock(deps, name),
+		})
+		verifyResponseOK(t, resp, err)
+	}
+	share := func(name string) int {
+		resp, err := clt.SetRepositoryMetadataWithResponse(ctx, name, apigen.SetRepositoryMetadataJSONRequestBody{
+			Metadata: apigen.RepositoryMetadataSet_Metadata{AdditionalProperties: map[string]string{"kaos.shared_with": "orbits"}},
+		})
+		require.NoError(t, err)
+		return resp.StatusCode()
+	}
+	require.Equal(t, http.StatusNoContent, share("dataset-shared"))
+	require.Equal(t, http.StatusBadRequest, share("plain-shared"))
+}

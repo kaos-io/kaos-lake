@@ -2558,6 +2558,9 @@ func (c *Controller) SetRepositoryMetadata(w http.ResponseWriter, r *http.Reques
 		writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
+	if _, sharing := body.Metadata.AdditionalProperties[repos.KeySharedWith]; sharing && !c.authorizeSharing(w, r, repository) {
+		return
+	}
 	ctx := r.Context()
 	c.LogAction(ctx, "update_repo_metadata", r, repository, "", "")
 	err := c.Catalog.UpdateRepositoryMetadata(ctx, repository, body.Metadata.AdditionalProperties)
@@ -2581,6 +2584,9 @@ func (c *Controller) DeleteRepositoryMetadata(w http.ResponseWriter, r *http.Req
 		writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
+	if slices.Contains(body.Keys, repos.KeySharedWith) && !c.authorizeSharing(w, r, repository) {
+		return
+	}
 	ctx := r.Context()
 	c.LogAction(ctx, "delete_repo_metadata", r, repository, "", "")
 	err := c.Catalog.DeleteRepositoryMetadata(ctx, repository, body.Keys)
@@ -2588,6 +2594,17 @@ func (c *Controller) DeleteRepositoryMetadata(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeResponse(w, r, http.StatusNoContent, nil)
+}
+
+// authorizeSharing asks for the delete-repository right, which only the project's admins have, to
+// share a dataset with other projects. Modified by KAOS (PRD novelcore/kaos#1283 D-09).
+func (c *Controller) authorizeSharing(w http.ResponseWriter, r *http.Request, repository string) bool {
+	return c.authorize(w, r, permissions.Node{
+		Permission: permissions.Permission{
+			Action:   permissions.DeleteRepositoryAction,
+			Resource: permissions.RepoArn(repository),
+		},
+	})
 }
 
 func (c *Controller) GetBranchProtectionRules(w http.ResponseWriter, r *http.Request, repository string) {

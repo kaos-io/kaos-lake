@@ -80,6 +80,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
   (`kaos.repositories.default_dataset`) and each declared app's `outputs_repository` are created
   and relabelled every `kaos.repositories.interval`; an undeclared outputs repository is labelled
   `kaos.orphaned` and never deleted. The metadata API refuses labels that break the naming rules.
+  With `kaos.repositories.location` set, every repository under the prefix is labelled
+  `kaos.location` (a platform key). `kaos.shared_with` (projects that may read a dataset) is
+  validated and needs the delete-repository right, so only the project's admins share. Editors
+  (Developers) may update `dataset-*` repositories so they can label the datasets they create.
 - **Dataset templates** (PRD novelcore/kaos#1283 F-04/F-05). `pkg/kaos/templates` embeds the
   templates (YOLO, Empty) and serves `GET /kaos/v1/dataset-templates`,
   `POST /kaos/v1/dataset-templates/{name}/render` (form values → a new dataset's files) and
