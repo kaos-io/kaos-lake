@@ -161,6 +161,7 @@ type Catalog interface {
 	UpdateRepositoryMetadata(ctx context.Context, repository string, metadata graveler.RepositoryMetadata) error
 	DeleteRepositoryMetadata(ctx context.Context, repository string, keys []string) error
 	ListRepositories(ctx context.Context, limit int, prefix, searchString, after string, opts ...catalog.ListRepositoriesOptionsFunc) ([]*catalog.Repository, bool, error)
+	GetCommit(ctx context.Context, repository, reference string) (*catalog.CommitLog, error)
 }
 
 // Reconcile creates each declared repository that is missing, under storagePrefix, and puts its
@@ -180,6 +181,30 @@ func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix, locatio
 		if err := labelLocation(ctx, c, storagePrefix, location, note); err != nil {
 			return changes, err
 		}
+	}
+	// A dataset-* repository someone made by hand, without a template (lakeFS's own Create
+	// repository, the API, the kubecore package), is a dataset too: labelled, it shows on the
+	// Datasets page and in the pipeline dropdown and gets main's protection. Like the New dataset
+	// flow, which labels after its first commit, it is labelled only once its default branch has
+	// a commit of its own, so the first upload straight to main is not refused.
+	if err := forEachRepository(ctx, c, DatasetPrefix, func(r *catalog.Repository) error {
+		if !ValidName(r.Name, DatasetPrefix) {
+			return nil
+		}
+		md, err := c.GetRepositoryMetadata(ctx, r.Name)
+		if err != nil || md[KeyKind] != "" {
+			return err
+		}
+		if head, err := c.GetCommit(ctx, r.Name, r.DefaultBranch); err != nil || len(head.Parents) == 0 {
+			return nil // empty (only lakeFS's initial commit) or unreadable: next pass
+		}
+		if err := c.UpdateRepositoryMetadata(ctx, r.Name, graveler.RepositoryMetadata{KeyKind: KindDataset}); err != nil {
+			return err
+		}
+		note("labelled %s a dataset: made without a template", r.Name)
+		return nil
+	}); err != nil {
+		return changes, err
 	}
 	err := forEachRepository(ctx, c, OutputsPrefix, func(r *catalog.Repository) error {
 		name := r.Name
