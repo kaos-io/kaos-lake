@@ -605,6 +605,9 @@ type BaseConfig struct {
 		UI struct {
 			// ConsoleURL is the KAOS console; the UI header links back to it. Empty: no link.
 			ConsoleURL string `mapstructure:"console_url"`
+			// MLflowURL is the project's MLflow; an outputs repository's Model panel links to its
+			// registered models and runs. Empty: no links.
+			MLflowURL string `mapstructure:"mlflow_url"`
 			// CORSOrigins are the exact origins (https://host) of the KAOS console that may read
 			// this API from the browser: GET only, bearer token, never cookies (pkg/kaos/cors).
 			// Empty: off.

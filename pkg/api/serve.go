@@ -145,9 +145,11 @@ func Serve(
 	// Modified by KAOS: dataset templates for the UI and the CLI (pkg/kaos/templates, PRD
 	// novelcore/kaos#1283 F-04/F-05). They render files; the caller commits them as itself.
 	th := templates.Handler{StorageNamespacePrefix: cfg.GetBaseConfig().KAOS.Repositories.StorageNamespacePrefix}
-	// The header's link back to the KAOS console (kaos.ui.console_url).
+	// The header's link back to the KAOS console (kaos.ui.console_url) and the Model panel's links
+	// to MLflow (kaos.ui.mlflow_url).
 	r.Method(http.MethodGet, "/kaos/v1/ui", uiconfig.Handler{
 		ConsoleURL:       cfg.GetBaseConfig().KAOS.UI.ConsoleURL,
+		MLflowURL:        cfg.GetBaseConfig().KAOS.UI.MLflowURL,
 		LegacyRepository: cfg.GetBaseConfig().KAOS.Repositories.LegacyRepository,
 	})
 	r.Get("/kaos/v1/dataset-templates", th.List)

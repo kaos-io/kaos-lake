@@ -188,8 +188,17 @@ To release, open a pull request that bumps `kaos/VERSION`.
   data, commit and tags; "Open pull requests" per dataset; after New dataset the dataset page shows
   next steps (add data through a branch and pull request or `kubecore dataset push`, then release a
   version); after Edit the dialog links to the pull request; repository pages of datasets and
-  outputs show a strip (outputs: the app and its model/run folders). `kaos.ui.console_url` adds
-  a link back to the KAOS console in the top bar (`GET /kaos/v1/ui`).
+  outputs show a strip. `kaos.ui.console_url` adds a link back to the KAOS console in the top bar
+  (`GET /kaos/v1/ui`).
+- **An outputs repository is its app's Model** (PRD novelcore/kaos#1283). Its badge reads
+  `Model · <app>`, and its strip is the Model panel: links to the console's Models area
+  (`<console_url>/models`) and to MLflow (`<mlflow_url>/#/models`, set by `kaos.ui.mlflow_url`,
+  an absolute http(s) URL, else no link; `GET /kaos/v1/ui` answers `mlflow_url`); the registered
+  versions (tags `model-<name>-v<N>`, newest first per model, up to 100) with the tagged commit's
+  experiment, run and dataset, its files under `checkpoints/<experiment>/<run>/` and its MLflow run
+  (`#/runs/<mlflow_run_id>`); and the last 20 training runs (commits on main, first parents of the
+  last 100, with `kind` `checkpoints` or `quantization`), each marked with the tag it is registered
+  as. Code: `webui/src/lib/kaos/model.js`, `webui/src/lib/kaos/modelPanel.jsx`.
 - **Unknown `kaos.*` keys** do not stop the server: config is decoded exactly, but the `kaos`
   block collects keys it does not know instead of failing, so a newer chart cannot break an older
   image.
