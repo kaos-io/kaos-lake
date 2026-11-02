@@ -111,7 +111,7 @@ export const LayoutCheck = ({ result }) => {
                 . kaos-lake checks the layout&apos;s declarative rules only
                 {hook ? (
                     <>
-                        ; its hook <code>{hook}</code> runs in <code>kaos-cli layout validate</code>
+                        ; its hook <code>{hook}</code> runs in <code>kaosctl layout validate</code>
                     </>
                 ) : (
                     ''

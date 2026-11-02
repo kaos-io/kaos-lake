@@ -6,7 +6,7 @@ package templates
 //
 // The registry is main of the project's repository "layouts": one folder per layout holding its
 // layout.yaml. People who may create datasets (Developers, Admins) may create and write that
-// repository too, so a project adds or changes a layout with a commit (kaos-cli layout publish
+// repository too, so a project adds or changes a layout with a commit (kaosctl layout publish
 // opens a pull request), with lakeFS's history and review, and without a platform release. App
 // keys cannot write it. kaos-lake reads it as the server, so any signed-in caller sees the
 // project's layouts.

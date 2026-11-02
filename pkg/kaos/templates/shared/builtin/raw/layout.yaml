@@ -15,4 +15,4 @@ skeleton:
 
       {{/if}}
       A dataset on KAOS. Upload data with the lakeFS UI (a branch and a pull request) or
-      `kaos-cli dataset push <folder> {{name}} -m "first files"`, then release a version so pipelines can pick it.
+      `kaosctl dataset push <folder> {{name}} -m "first files"`, then release a version so pipelines can pick it.

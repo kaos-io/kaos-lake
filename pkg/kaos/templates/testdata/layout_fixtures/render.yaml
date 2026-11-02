@@ -40,14 +40,14 @@
       ## Add data and release a version
 
       Main of a dataset changes only when a pull request is merged. In the lakeFS UI, create a branch,
-      upload to it and open a pull request; or use `kaos-cli` (`pip install kaos-lib`):
+      upload to it and open a pull request; or use `kaosctl` (`pip install kaos-lib`):
 
       ```
-      kaos-cli login
-      kaos-cli layout validate <folder> --layout yolo
-      kaos-cli dataset push <folder> dataset-cars -m "Add the first images"   # opens a pull request
-      kaos-cli dataset release dataset-cars                                   # tags main as the next version
-      kaos-cli dataset pull dataset-cars@v1 [dest]                            # download a version
+      kaosctl login
+      kaosctl layout validate <folder> --layout yolo
+      kaosctl dataset push <folder> dataset-cars -m "Add the first images"   # opens a pull request
+      kaosctl dataset release dataset-cars                                   # tags main as the next version
+      kaosctl dataset pull dataset-cars@v1 [dest]                            # download a version
       ```
 
       Pipelines offer every released version in their dataset dropdown: the parameter is
@@ -60,7 +60,7 @@
       # dataset-misc
 
       A dataset on KAOS. Upload data with the lakeFS UI (a branch and a pull request) or
-      `kaos-cli dataset push <folder> dataset-misc -m "first files"`, then release a version so pipelines can pick it.
+      `kaosctl dataset push <folder> dataset-misc -m "first files"`, then release a version so pipelines can pick it.
 - case: yolo needs a class
   builtin: yolo
   name: dataset-cars

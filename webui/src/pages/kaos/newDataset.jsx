@@ -128,9 +128,9 @@ const NewDatasetPage = () => {
                 </div>
                 <p className="small text-muted">
                     Your project can add its own layouts: a <code>layout.yaml</code> in the{' '}
-                    <code>{catalog.layouts_repository || 'layouts'}</code> repository (<code>kaos-cli layout init</code>
-                    , then <code>kaos-cli layout publish</code>). kaos-lake checks a layout&apos;s declarative rules
-                    only; a layout&apos;s Python hook runs only in kaos-cli.
+                    <code>{catalog.layouts_repository || 'layouts'}</code> repository (<code>kaosctl layout init</code>,
+                    then <code>kaosctl layout publish</code>). kaos-lake checks a layout&apos;s declarative rules only;
+                    a layout&apos;s Python hook runs only in kaosctl.
                 </p>
                 {(catalog.problems || []).map((p) => (
                     <AlertError key={p.path} error={`Layout not offered: ${p.error}`} />

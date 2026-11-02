@@ -48,14 +48,14 @@ skeleton:
       ## Add data and release a version
 
       Main of a dataset changes only when a pull request is merged. In the lakeFS UI, create a branch,
-      upload to it and open a pull request; or use `kaos-cli` (`pip install kaos-lib`):
+      upload to it and open a pull request; or use `kaosctl` (`pip install kaos-lib`):
 
       ```
-      kaos-cli login
-      kaos-cli layout validate <folder> --layout yolo
-      kaos-cli dataset push <folder> {{name}} -m "Add the first images"   # opens a pull request
-      kaos-cli dataset release {{name}}                                   # tags main as the next version
-      kaos-cli dataset pull {{name}}@v1 [dest]                            # download a version
+      kaosctl login
+      kaosctl layout validate <folder> --layout yolo
+      kaosctl dataset push <folder> {{name}} -m "Add the first images"   # opens a pull request
+      kaosctl dataset release {{name}}                                   # tags main as the next version
+      kaosctl dataset pull {{name}}@v1 [dest]                            # download a version
       ```
 
       Pipelines offer every released version in their dataset dropdown: the parameter is

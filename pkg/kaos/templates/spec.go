@@ -29,7 +29,7 @@ import (
 const maxSpecBytes = 256 * 1024
 
 var (
-	reservedNames = []string{"none"}                // `kaos-cli dataset create --layout none` makes an empty repository
+	reservedNames = []string{"none"}                // `kaosctl dataset create --layout none` makes an empty repository
 	reservedKeys  = []string{"name", "description"} // always available to skeleton files
 
 	schemaKeywords = []string{"type", "enum", "required", "properties", "additionalProperties", "items", "minItems",
