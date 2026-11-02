@@ -43,8 +43,9 @@ type Dataset struct {
 	Default     bool      `json:"default,omitempty"`
 	Description string    `json:"description,omitempty"`
 	Location    string    `json:"location,omitempty"`
-	Latest      string    `json:"latest,omitempty"` // main's head commit
-	Versions    []Version `json:"versions"`         // newest first
+	Template    string    `json:"template,omitempty"` // kaos.template, when made from one
+	Latest      string    `json:"latest,omitempty"`   // main's head commit
+	Versions    []Version `json:"versions"`           // newest first
 }
 
 var versionTag = regexp.MustCompile(`^v(\d+)$`)
@@ -87,7 +88,7 @@ func list(ctx context.Context, c Catalog, keep func(graveler.RepositoryMetadata)
 				continue
 			}
 			d := Dataset{Name: r.Name, Default: md[repos.KeyDefault] == "true",
-				Description: md[repos.KeyDescription], Location: md[repos.KeyLocation]}
+				Description: md[repos.KeyDescription], Location: md[repos.KeyLocation], Template: md[repos.KeyTemplate]}
 			if d.Versions, err = versions(ctx, c, r.Name); err != nil {
 				return nil, err
 			}

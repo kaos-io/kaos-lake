@@ -1,8 +1,9 @@
-// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-03/F-06/F-10): new file, Apache-2.0.
+// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-03/F-06/F-10/F-12): new file, Apache-2.0.
 //
 // The Datasets page: the project's dataset-* repositories with their purpose, description,
 // template, versions and how to use them in a pipeline, a Release version action, and New dataset;
-// and the MeluXina tab with what is staged on the HPC site.
+// below them the datasets other projects share with this one; and the MeluXina tab with what is
+// staged on the HPC site.
 import React, { useCallback, useEffect, useState } from 'react';
 import Button from 'react-bootstrap/Button';
 import Card from 'react-bootstrap/Card';
@@ -27,6 +28,7 @@ import { useConsoleHref, useUIConfig } from '../../lib/kaos/consoleLink';
 import { PurposeBadge, useRepoLabels } from '../../lib/kaos/purpose';
 import { templateTitle } from '../../lib/kaos/templates';
 import MeluxinaTab from './meluxina';
+import SharedWithUs from './sharedWithUs';
 
 /** Sharing is set in the KAOS console (PRD novelcore/kaos#1283 F-11); here it is only shown. */
 const SharingNote = ({ labels }) => {
@@ -192,6 +194,7 @@ const DatasetList = () => {
                 </Card>
             )}
             {repos && repos.map((repo) => <DatasetCard key={repo.id} repo={repo} />)}
+            <SharedWithUs />
         </>
     );
 };

@@ -7,7 +7,7 @@ import Badge from 'react-bootstrap/Badge';
 import { KIND, repoMetadata } from './api';
 import { useUIConfig } from './consoleLink';
 
-export const PURPOSE_COLOURS = { dataset: '#2e7d32', outputs: '#6f42c1', other: '#6c757d' };
+export const PURPOSE_COLOURS = { dataset: '#2e7d32', outputs: '#6f42c1', other: '#6c757d', shared: '#00796b' };
 
 /** The repository's kaos.* labels, or {} while loading or when unreadable. */
 export const useRepoLabels = (repoId, refresh = 0) => {
@@ -55,6 +55,16 @@ export const PlaceBadges = ({ labels }) => (
             </Pill>
         )}
     </>
+);
+
+/** A dataset another project of the organisation shares with this one (teal, as Shared with). */
+export const SharedByBadge = ({ owner }) => (
+    <Pill
+        colour={PURPOSE_COLOURS.shared}
+        title={`Project ${owner} shares this dataset with this project; it is read-only here`}
+    >
+        Shared by {owner}
+    </Pill>
 );
 
 /** Dataset (green, Default), Model (violet, with the app: its outputs repository), Orphaned,
