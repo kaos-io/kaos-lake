@@ -108,6 +108,10 @@ func TestTwoProjectsShareADataset(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		return rec.Body.String(), body.Datasets
 	}
+	// vision's people see the same shares on the Datasets page (/kaos/v1/shared-with-us).
+	people := func() (string, sharing.SharedWithUsResponse) {
+		return sharedWithUs(t, sharing.SharedWithUsHandler{Project: "vision", Aggregator: visionSharing.Aggregator})
+	}
 	own := datacatalog.Dataset{Name: "dataset-own", Default: true, Latest: "head-dataset-own",
 		Versions: []datacatalog.Version{{Tag: "v1", Commit: "c1-dataset-own"}}}
 	roads := datacatalog.Dataset{Name: "cars/dataset-roads", Owner: "cars", Description: "roads", Latest: "head-dataset-roads",
@@ -125,6 +129,12 @@ func TestTwoProjectsShareADataset(t *testing.T) {
 	require.Equal(t, []datacatalog.Dataset{own, roads}, got)
 	require.NotContains(t, raw, "orbits", "another consumer is never revealed")
 	require.NotContains(t, raw, "dataset-private")
+	raw, _ = people()
+	require.JSONEq(t, `{"project":"vision","notes":[],"datasets":[{"name":"cars/dataset-roads","owner":"cars","repo":"dataset-roads",
+	 "description":"roads","latest":"head-dataset-roads","versions":[{"tag":"v1","commit":"c1-dataset-roads"}],
+	 "url":"https://lakefs-cars.acme.kaos.eu/repositories/dataset-roads/objects"}]}`, raw)
+	require.NotContains(t, raw, "orbits", "another consumer is never revealed")
+	require.NotContains(t, raw, cars.URL, "the in-cluster endpoint stays inside")
 	require.EqualValues(t, 1, z.mints.Load(), "the machine token is minted once and reused")
 
 	share("")
@@ -133,6 +143,9 @@ func TestTwoProjectsShareADataset(t *testing.T) {
 	c.Add(61 * time.Second)
 	_, got = list()
 	require.Equal(t, []datacatalog.Dataset{own}, got, "unshared: gone after the TTL")
+	_, page := people()
+	require.Empty(t, page.Datasets, "and from the Datasets page")
+	require.Empty(t, page.Notes)
 	_, err = svc.GetGroup(ctx, repos.ConsumerGroupPrefix+"vision")
 	require.ErrorIs(t, err, auth.ErrNotFound)
 }

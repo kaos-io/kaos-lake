@@ -20,7 +20,7 @@ vi.mock('../api', () => ({
     pulls: { create: vi.fn(async (repo, p) => ({ id: 'pr1', ...p })) },
 }));
 
-import { createDataset, getUIConfig, proposeChange, releaseVersion } from './api';
+import { createDataset, getSharedWithUs, getUIConfig, proposeChange, releaseVersion } from './api';
 
 beforeEach(() => {
     calls.length = 0;
@@ -98,5 +98,44 @@ describe('getUIConfig', () => {
         expect(a.legacy_repository).toBe('proj');
         expect(b).toBe(a);
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('getSharedWithUs', () => {
+    const reply = (status, contentType, body) =>
+        vi.fn(async () => ({
+            ok: status >= 200 && status < 300,
+            status,
+            statusText: String(status),
+            headers: new Headers(contentType ? { 'Content-Type': contentType } : {}),
+            json: async () => body,
+        }));
+    const nothing = { project: '', datasets: [], notes: [] };
+
+    it('reads the shares and notes', async () => {
+        const body = {
+            project: 'vision',
+            datasets: [{ name: 'cars/dataset-roads', owner: 'cars', versions: [] }],
+            notes: [{ owner: 'old', note: 'too old' }],
+        };
+        globalThis.fetch = reply(200, 'application/json', body);
+        expect(await getSharedWithUs()).toEqual(body);
+        expect(globalThis.fetch.mock.calls[0][0]).toBe('/kaos/v1/shared-with-us');
+    });
+    it('reads an older lakeFS (404, or the web UI page) as nothing shared', async () => {
+        globalThis.fetch = reply(404, 'text/plain', null);
+        expect(await getSharedWithUs()).toEqual(nothing);
+        globalThis.fetch = reply(200, 'text/html; charset=utf-8', null);
+        expect(await getSharedWithUs()).toEqual(nothing);
+        globalThis.fetch = reply(200, '', null);
+        expect(await getSharedWithUs()).toEqual(nothing);
+    });
+    it('reads missing or null lists as empty', async () => {
+        globalThis.fetch = reply(200, 'application/json', { project: 'vision', datasets: null });
+        expect(await getSharedWithUs()).toEqual({ project: 'vision', datasets: [], notes: [] });
+    });
+    it('throws on any other failure', async () => {
+        globalThis.fetch = reply(401, 'application/json', { message: 'no' });
+        await expect(getSharedWithUs()).rejects.toThrow('refused');
     });
 });

@@ -5,7 +5,10 @@ package sharing
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -67,6 +70,89 @@ func (h SharedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		datasets = []datacatalog.Dataset{}
 	}
 	writeJSON(w, http.StatusOK, SharedResponse{Owner: h.Owner, Datasets: datasets})
+}
+
+// SharedWithUsPath is the consumer side's endpoint for people: what peers share with this project.
+const SharedWithUsPath = "/kaos/v1/shared-with-us"
+
+// SharedDataset is one dataset another project shares with this one, as people see it.
+type SharedDataset struct {
+	Name        string                `json:"name"` // <owner>/<repo>, as pipelines name it
+	Owner       string                `json:"owner"`
+	Repo        string                `json:"repo"` // the repository in the owner's lakeFS
+	Location    string                `json:"location,omitempty"`
+	Description string                `json:"description,omitempty"`
+	Template    string                `json:"template,omitempty"`
+	Latest      string                `json:"latest,omitempty"`
+	Versions    []datacatalog.Version `json:"versions"`
+	// URL is the dataset in the owner's lakeFS web UI (the peer's public url).
+	URL string `json:"url"`
+}
+
+// Note says why an owner's datasets are missing or may be out of date.
+type Note struct {
+	Owner string `json:"owner"`
+	Note  string `json:"note"`
+}
+
+// SharedWithUsResponse is what GET /kaos/v1/shared-with-us answers.
+type SharedWithUsResponse struct {
+	Project  string          `json:"project"`
+	Datasets []SharedDataset `json:"datasets"`
+	Notes    []Note          `json:"notes"`
+}
+
+// SharedWithUsHandler answers GET /kaos/v1/shared-with-us, behind the API's authentication: the
+// datasets the peers share with this project, from the same aggregation and cache as the catalog,
+// for the Datasets page, and a note for each owner that could not be read.
+//
+// Any signed-in caller of this lakeFS (a person or an app key) gets the same answer. That is meant:
+// what is shared with the project is shared with its people and pipelines, who read it in the
+// owner's lakeFS through its consumer group for this project, and the answer carries names,
+// versions and links only, never data. It never carries the token sent to
+// peers, their in-cluster endpoints, their errors, or who else a dataset is shared with (the owner
+// side never sends that). Aggregator nil (no kaos.sharing): nothing shared.
+type SharedWithUsHandler struct {
+	Project    string // this project (kaos.token_identity.project)
+	Aggregator *Aggregator
+}
+
+func (h SharedWithUsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if _, err := auth.GetUser(r.Context()); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "sign in to read the datasets shared with this project"})
+		return
+	}
+	out := SharedWithUsResponse{Project: h.Project, Datasets: []SharedDataset{}, Notes: []Note{}}
+	if h.Aggregator != nil {
+		for _, p := range h.Aggregator.Collect(r.Context()) {
+			if note := noteFor(p); note != "" {
+				out.Notes = append(out.Notes, Note{Owner: p.Peer.Project, Note: note})
+			}
+			for _, d := range p.Datasets {
+				repo := strings.TrimPrefix(d.Name, p.Peer.Project+"/")
+				out.Datasets = append(out.Datasets, SharedDataset{
+					Name: d.Name, Owner: p.Peer.Project, Repo: repo, Location: d.Location, Description: d.Description,
+					Template: d.Template, Latest: d.Latest, Versions: d.Versions,
+					URL: strings.TrimSuffix(p.Peer.URL, "/") + "/repositories/" + url.PathEscape(repo) + "/objects",
+				})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// noteFor says why p's datasets are missing or may be out of date; "" when they are current.
+func noteFor(p PeerShares) string {
+	switch {
+	case p.Err == nil:
+		return ""
+	case p.Datasets != nil:
+		return fmt.Sprintf("Project %s's lakeFS did not answer; showing its last known list.", p.Peer.Project)
+	case errors.Is(p.Err, ErrOlderPeer):
+		return fmt.Sprintf("Project %s's lakeFS is too old to share datasets; what it shares is not shown.", p.Peer.Project)
+	default:
+		return fmt.Sprintf("Project %s's lakeFS did not answer; what it shares is not shown.", p.Peer.Project)
+	}
 }
 
 // PeersHandler answers GET /kaos/v1/peers, behind the API's authentication: the peers file as

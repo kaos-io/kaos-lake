@@ -105,3 +105,39 @@ func TestKaosPeers(t *testing.T) {
 	code, _ = get(func(r *http.Request) { r.SetBasicAuth(cred.AccessKeyID, "wrong") })
 	require.Equal(t, http.StatusUnauthorized, code)
 }
+
+// /kaos/v1/shared-with-us is behind the API's authentication: any signed-in caller, by access key
+// or login token; without kaos.sharing, nothing shared.
+func TestKaosSharedWithUs(t *testing.T) {
+	handler, _ := setupHandler(t)
+	server := setupServer(t, handler)
+	cred := createDefaultAdminUser(t, setupClientByEndpoint(t, server.URL, "", ""))
+	get := func(set func(r *http.Request)) (int, string) {
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/kaos/v1/shared-with-us", nil)
+		require.NoError(t, err)
+		set(r)
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(body)
+	}
+
+	code, body := get(func(r *http.Request) { r.SetBasicAuth(cred.AccessKeyID, cred.SecretAccessKey) })
+	require.Equal(t, http.StatusOK, code)
+	require.JSONEq(t, `{"project":"","datasets":[],"notes":[]}`, body)
+
+	login, err := setupClientByEndpoint(t, server.URL, "", "").LoginWithResponse(t.Context(), apigen.LoginJSONRequestBody{
+		AccessKeyId: cred.AccessKeyID, SecretAccessKey: cred.SecretAccessKey,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, login.JSON200)
+	code, _ = get(func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+login.JSON200.Token) })
+	require.Equal(t, http.StatusOK, code)
+
+	code, _ = get(func(*http.Request) {})
+	require.Equal(t, http.StatusUnauthorized, code)
+	code, _ = get(func(r *http.Request) { r.SetBasicAuth(cred.AccessKeyID, "wrong") })
+	require.Equal(t, http.StatusUnauthorized, code)
+}

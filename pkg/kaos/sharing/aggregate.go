@@ -43,7 +43,8 @@ type SharedResponse struct {
 	Datasets []datacatalog.Dataset `json:"datasets"`
 }
 
-// Aggregator reads the datasets every peer shares with this project, for the catalog.
+// Aggregator reads the datasets every peer shares with this project, for the catalog (Shared) and
+// for people (Collect, behind /kaos/v1/shared-with-us): one fan-out and one cache for both.
 //
 // Each peer's answer is reused for TTL, also after a failure, so a peer that is down costs at
 // most one PeerTimeout per TTL. A peer that times out or answers an error contributes its last
@@ -74,6 +75,22 @@ type entry struct {
 	datasets []datacatalog.Dataset // the last good answer, named <owner>/<dataset>
 	good     time.Time             // when datasets were read; zero: never
 	checked  time.Time             // the last attempt
+	err      error                 // why the last attempt failed; nil: it did not
+}
+
+// errNotRead marks a peer whose answer is not in the cache, because the peers file changed while
+// it was read.
+var errNotRead = errors.New("peer not read")
+
+// PeerShares is what one peer shares with this project, as last read.
+type PeerShares struct {
+	Peer Peer
+	// Datasets is the peer's last good answer, named <owner>/<dataset>; nil when there is none to
+	// serve (never read, or older than Stale).
+	Datasets []datacatalog.Dataset
+	// Err is why the last attempt to read the peer failed (ErrOlderPeer among others); nil when it
+	// succeeded. With Err set, non-nil Datasets is a stale copy.
+	Err error
 }
 
 func (a *Aggregator) now() time.Time {
@@ -100,6 +117,16 @@ func (a *Aggregator) log() logging.Logger {
 // Shared returns the datasets the peers share with this project, peer by peer in the peers
 // file's order, named <owner>/<dataset> with Owner set and never a default.
 func (a *Aggregator) Shared(ctx context.Context) []datacatalog.Dataset {
+	var out []datacatalog.Dataset
+	for _, p := range a.Collect(ctx) {
+		out = append(out, p.Datasets...)
+	}
+	return out
+}
+
+// Collect returns what each peer shares with this project, in the peers file's order, with why
+// a peer could not be read.
+func (a *Aggregator) Collect(ctx context.Context) []PeerShares {
 	peers := a.Peers()
 	a.mu.Lock()
 	if a.cache == nil {
@@ -112,21 +139,17 @@ func (a *Aggregator) Shared(ctx context.Context) []datacatalog.Dataset {
 	}
 	a.mu.Unlock()
 
-	answers := make([][]datacatalog.Dataset, len(peers))
+	out := make([]PeerShares, len(peers))
 	var wg sync.WaitGroup
 	for i, p := range peers {
-		wg.Go(func() { answers[i] = a.peer(ctx, p) })
+		wg.Go(func() { out[i] = a.peer(ctx, p) })
 	}
 	wg.Wait()
-	var out []datacatalog.Dataset
-	for _, ds := range answers {
-		out = append(out, ds...)
-	}
 	return out
 }
 
 // peer returns p's answer, from the cache while it is fresh.
-func (a *Aggregator) peer(ctx context.Context, p Peer) []datacatalog.Dataset {
+func (a *Aggregator) peer(ctx context.Context, p Peer) PeerShares {
 	a.mu.Lock()
 	e := a.cache[p.Project]
 	fresh := e != nil && e.endpoint == p.Endpoint && a.now().Sub(e.checked) < orDefault(a.TTL, DefaultCacheTTL)
@@ -145,7 +168,7 @@ func (a *Aggregator) peer(ctx context.Context, p Peer) []datacatalog.Dataset {
 				e = &entry{endpoint: p.Endpoint}
 				a.cache[p.Project] = e
 			}
-			e.checked = a.now()
+			e.checked, e.err = a.now(), err
 			if err != nil {
 				log := a.log().WithError(err).WithField("peer", p.Project).WithField("endpoint", p.Endpoint)
 				if e.good.IsZero() {
@@ -162,10 +185,14 @@ func (a *Aggregator) peer(ctx context.Context, p Peer) []datacatalog.Dataset {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	e = a.cache[p.Project]
-	if e == nil || e.endpoint != p.Endpoint || e.good.IsZero() || a.now().Sub(e.good) > orDefault(a.Stale, StaleFor) {
-		return nil
+	if e == nil || e.endpoint != p.Endpoint {
+		return PeerShares{Peer: p, Err: errNotRead}
 	}
-	return slices.Clone(e.datasets)
+	out := PeerShares{Peer: p, Err: e.err}
+	if !e.good.IsZero() && a.now().Sub(e.good) <= orDefault(a.Stale, StaleFor) {
+		out.Datasets = slices.Clone(e.datasets)
+	}
+	return out
 }
 
 // fetch asks p for the datasets it shares with this project.

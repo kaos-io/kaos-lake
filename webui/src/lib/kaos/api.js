@@ -57,6 +57,26 @@ export const getUIConfig = () => {
     return uiConfig;
 };
 
+/**
+ * The datasets other projects of the organisation share with this one, for the Datasets page:
+ * { project, datasets, notes } (pkg/kaos/sharing). A lakeFS without the endpoint (older than
+ * kaos.20) answers 404 or the web UI's own page: that reads as nothing shared.
+ */
+export const getSharedWithUs = async () => {
+    const response = await fetch('/kaos/v1/shared-with-us', { headers: new Headers(defaultAPIHeaders) });
+    const json = (response.headers.get('Content-Type') || '').includes('application/json');
+    if (response.status === 404 || (response.ok && !json)) return { project: '', datasets: [], notes: [] };
+    if (!response.ok) {
+        throw new Error((await extractError(response)) || `${response.status} ${response.statusText}`);
+    }
+    const body = await response.json();
+    return {
+        project: body?.project || '',
+        datasets: Array.isArray(body?.datasets) ? body.datasets : [],
+        notes: Array.isArray(body?.notes) ? body.notes : [],
+    };
+};
+
 export const listTemplates = () => request('/kaos/v1/dataset-templates');
 
 export const renderTemplate = (template, name, description, values) =>

@@ -248,3 +248,19 @@ To release, open a pull request that bumps `kaos/VERSION`.
   reused until half its lifetime, the key re-read on each mint; access keys never leave.
   `GET /kaos/v1/peers` answers the peers file (empty without `kaos.sharing`) to any signed-in
   caller. Code: `pkg/kaos/sharing`, `pkg/kaos/repos/kick.go`.
+- **"Shared with this project" on the Datasets page** (PRD novelcore/kaos#1283 F-12, release
+  `1.86.0-kaos.20`). `GET /kaos/v1/shared-with-us`, behind the API's authentication, answers
+  `{"project": <own>, "datasets": [{name: "<owner>/<repo>", owner, repo, location, description,
+  template, latest, versions: [{tag, commit}], url: "<owner's public lakeFS url>/repositories/<repo>/objects"}],
+  "notes": [{owner, note}]}` from the same aggregation and cache as `/kaos/v1/catalog`
+  (`Aggregator.Collect`; the catalog's `Shared` flattens it), so the page never adds requests to
+  peers. An owner that is down, too old, or served from its stale copy gets a note instead of an
+  error. Without `kaos.sharing` it answers no datasets and no notes. Any signed-in person or app key
+  of this lakeFS may call it, by design: what is shared with the project is shared with its people
+  and pipelines, and the answer carries names, versions and links only, never the token sent to
+  peers, their in-cluster endpoints, their errors, or who else a dataset is shared with. The
+  catalog's datasets now carry `template` (`kaos.template`). The web UI lists them read-only below
+  the project's own datasets with a "Shared by <owner>" badge, the copyable `dataset = <owner>/<repo>@vN`
+  and a link to the owner's lakeFS; the section is hidden when nothing is shared, and an older
+  server (404 or the UI's page) reads as nothing shared. Code: `pkg/kaos/sharing/handlers.go`,
+  `webui/src/pages/kaos/sharedWithUs.jsx`.

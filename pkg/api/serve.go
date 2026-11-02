@@ -160,10 +160,17 @@ func Serve(
 		panic(err)
 	}
 	var peersFile *sharing.PeersFile
+	var aggregator *sharing.Aggregator
 	if sh := sharing.Active(); sh != nil {
-		peersFile = sh.Peers
+		peersFile, aggregator = sh.Peers, sh.Aggregator
 	}
 	r.With(sharingMW).Method(http.MethodGet, "/kaos/v1/peers", sharing.PeersHandler{File: peersFile})
+	// Modified by KAOS: what sibling projects share with this one, for the Datasets page (PRD
+	// novelcore/kaos#1283 F-12): any signed-in caller, from the catalog's aggregation and cache;
+	// nothing without kaos.sharing.
+	r.With(sharingMW).Method(http.MethodGet, sharing.SharedWithUsPath, sharing.SharedWithUsHandler{
+		Project: cfg.GetBaseConfig().KAOS.TokenIdentity.Project, Aggregator: aggregator,
+	})
 	if tokenid.Active() != nil {
 		r.With(sharingMW).Method(http.MethodGet, sharing.SharedPath, sharing.SharedHandler{
 			Catalog: catalog, Groups: authService, Owner: cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
