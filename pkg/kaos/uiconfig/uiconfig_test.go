@@ -3,6 +3,7 @@
 package uiconfig_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,10 +14,10 @@ import (
 
 func TestHandler(t *testing.T) {
 	for url, want := range map[string]string{
-		"":                           `{"console_url":"","mlflow_url":"","legacy_repository":"data"}`,
-		"https://console.kaos.eu/ui": `{"console_url":"https://console.kaos.eu/ui","mlflow_url":"","legacy_repository":"data"}`,
-		"javascript:alert(1)":        `{"console_url":"","mlflow_url":"","legacy_repository":"data"}`,
-		"console.kaos.eu":            `{"console_url":"","mlflow_url":"","legacy_repository":"data"}`,
+		"":                           `{"console_url":"","mlflow_url":"","legacy_repository":"data","meluxina":false}`,
+		"https://console.kaos.eu/ui": `{"console_url":"https://console.kaos.eu/ui","mlflow_url":"","legacy_repository":"data","meluxina":false}`,
+		"javascript:alert(1)":        `{"console_url":"","mlflow_url":"","legacy_repository":"data","meluxina":false}`,
+		"console.kaos.eu":            `{"console_url":"","mlflow_url":"","legacy_repository":"data","meluxina":false}`,
 	} {
 		rec := httptest.NewRecorder()
 		uiconfig.Handler{ConsoleURL: url, LegacyRepository: "data"}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kaos/v1/ui", nil))
@@ -37,6 +38,16 @@ func TestHandlerMLflowURL(t *testing.T) {
 		rec := httptest.NewRecorder()
 		uiconfig.Handler{ConsoleURL: "https://console.kaos.eu", MLflowURL: url}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kaos/v1/ui", nil))
 		require.Equal(t, http.StatusOK, rec.Code)
-		require.JSONEq(t, `{"console_url":"https://console.kaos.eu","mlflow_url":"`+want+`","legacy_repository":""}`, rec.Body.String(), url)
+		require.JSONEq(t, `{"console_url":"https://console.kaos.eu","mlflow_url":"`+want+`","legacy_repository":"","meluxina":false}`, rec.Body.String(), url)
+	}
+}
+
+func TestHandlerMeluxina(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		rec := httptest.NewRecorder()
+		uiconfig.Handler{Meluxina: on}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kaos/v1/ui", nil))
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.Equal(t, on, got["meluxina"])
 	}
 }

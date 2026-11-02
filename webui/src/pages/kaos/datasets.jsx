@@ -23,7 +23,7 @@ import {
     branchesHref,
 } from '../../lib/kaos/pipeline';
 import { PipelineUsage } from '../../lib/kaos/pipelineUsage';
-import { useConsoleUrl } from '../../lib/kaos/consoleLink';
+import { useConsoleUrl, useUIConfig } from '../../lib/kaos/consoleLink';
 import { PurposeBadge, useRepoLabels } from '../../lib/kaos/purpose';
 import { templateTitle } from '../../lib/kaos/templates';
 import MeluxinaTab from './meluxina';
@@ -196,14 +196,14 @@ const DatasetList = () => {
     );
 };
 
-const TABS = [
-    { key: 'datasets', title: 'Datasets' },
-    { key: 'meluxina', title: 'MeluXina' },
-];
+const DATASETS_TAB = { key: 'datasets', title: 'Datasets' };
+const MELUXINA_TAB = { key: 'meluxina', title: 'MeluXina' };
 
 const DatasetsPage = () => {
     const [params, setParams] = useSearchParams();
-    const tab = TABS.some((t) => t.key === params.get('tab')) ? params.get('tab') : 'datasets';
+    // The MeluXina tab only where this lakeFS serves the view (a project that trains on MeluXina).
+    const tabs = useUIConfig().meluxina ? [DATASETS_TAB, MELUXINA_TAB] : [DATASETS_TAB];
+    const tab = tabs.some((t) => t.key === params.get('tab')) ? params.get('tab') : 'datasets';
     return (
         <Container fluid="xl" className="mt-3">
             <div className="d-flex align-items-center mb-3">
@@ -218,7 +218,7 @@ const DatasetsPage = () => {
                 activeKey={tab}
                 onSelect={(k) => setParams(k === 'datasets' ? {} : { tab: k })}
             >
-                {TABS.map((t) => (
+                {tabs.map((t) => (
                     <Nav.Item key={t.key}>
                         <Nav.Link eventKey={t.key}>{t.title}</Nav.Link>
                     </Nav.Item>
