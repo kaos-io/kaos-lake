@@ -23,20 +23,20 @@ import {
     branchesHref,
 } from '../../lib/kaos/pipeline';
 import { PipelineUsage } from '../../lib/kaos/pipelineUsage';
-import { useConsoleUrl, useUIConfig } from '../../lib/kaos/consoleLink';
+import { useConsoleHref, useUIConfig } from '../../lib/kaos/consoleLink';
 import { PurposeBadge, useRepoLabels } from '../../lib/kaos/purpose';
 import { templateTitle } from '../../lib/kaos/templates';
 import MeluxinaTab from './meluxina';
 
 /** Sharing is set in the KAOS console (PRD novelcore/kaos#1283 F-11); here it is only shown. */
 const SharingNote = ({ labels }) => {
-    const consoleUrl = useConsoleUrl();
+    const href = useConsoleHref('datasets');
     const shared = (labels['kaos.shared_with'] || '').trim() !== '';
-    if (!consoleUrl) return null;
+    if (!href) return null;
     return (
         <div className="small text-muted mt-1">
             {shared ? 'Sharing is managed' : 'Share it with other projects'} in the{' '}
-            <a href={`${consoleUrl.replace(/\/+$/, '')}/datasets`} target="_blank" rel="noreferrer">
+            <a href={href} target="_blank" rel="noreferrer">
                 KAOS console
             </a>
             .

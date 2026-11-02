@@ -47,8 +47,8 @@ const RunLinks = ({ repoId, row }) => (
 );
 
 /** "Model of <app>", what it holds, and the console's and MLflow's model pages when configured. */
-export const ModelHeader = ({ app, orphaned, consoleUrl, mlflowUrl }) => {
-    const consoleModels = consoleModelsUrl(consoleUrl);
+export const ModelHeader = ({ app, orphaned, consoleUrl, mlflowUrl, project = '' }) => {
+    const consoleModels = consoleModelsUrl(consoleUrl, project);
     const mlflowModels = mlflowModelsUrl(mlflowUrl);
     return (
         <div>
@@ -181,6 +181,7 @@ export const ModelPanel = ({ repoId, labels }) => {
                 app={labels['kaos.app']}
                 orphaned={labels['kaos.orphaned'] === 'true'}
                 consoleUrl={config.console_url}
+                project={config.project || ''}
                 mlflowUrl={mlflowUrl}
             />
             {error && <div className="small text-danger">{error.message}</div>}
