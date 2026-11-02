@@ -125,6 +125,7 @@ func Serve(
 	}
 	// Modified by KAOS: ML workflow pods exchange their token for an access key (F-05); the
 	// project's own pods read the dataset catalog (PRD novelcore/kaos#1283 D-05).
+	meluxinaServed := false
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
 		if ns := cfg.GetBaseConfig().KAOS.Catalog.Namespaces; len(ns) > 0 {
@@ -133,6 +134,7 @@ func Serve(
 		// What is staged on MeluXina: the stager's pods post a snapshot, signed-in people read it
 		// (pkg/kaos/meluxina, PRD novelcore/kaos#1283 F-10).
 		if ns, svc := cfg.GetBaseConfig().KAOS.Meluxina.Namespaces, meluxina.Active(); len(ns) > 0 && svc != nil {
+			meluxinaServed = true
 			h := meluxina.Handler{Service: svc, Verify: wl.Namespace, Namespaces: ns}
 			authMW, err := GenericAuthMiddleware(logger, authenticator, authService, &oidcConfig, &cookieAuthConfig)
 			if err != nil {
@@ -151,6 +153,7 @@ func Serve(
 		ConsoleURL:       cfg.GetBaseConfig().KAOS.UI.ConsoleURL,
 		MLflowURL:        cfg.GetBaseConfig().KAOS.UI.MLflowURL,
 		LegacyRepository: cfg.GetBaseConfig().KAOS.Repositories.LegacyRepository,
+		Meluxina:         meluxinaServed,
 	})
 	r.Get("/kaos/v1/dataset-templates", th.List)
 	r.Post("/kaos/v1/dataset-templates/{name}/render", th.Render)

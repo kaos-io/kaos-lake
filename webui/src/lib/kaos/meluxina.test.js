@@ -8,6 +8,7 @@ import {
     STALE_AFTER_MS,
     alertsFor,
     formatBytes,
+    getMeluxina,
     groupByDataset,
     relativeTime,
     tagsOfCommit,
@@ -110,5 +111,33 @@ describe('names and commands', () => {
         expect(pushCommand('dataset-cars')).toBe('kubecore dataset push <folder> dataset-cars -m "<message>"');
         expect(releaseCommand('dataset-cars')).toBe('kubecore dataset release dataset-cars');
         expect(CLI_README_URL).not.toMatch(/@[0-9a-f]{7,}/);
+    });
+});
+
+describe('getMeluxina', () => {
+    const answer = (status, contentType, body) => ({
+        ok: status >= 200 && status < 300,
+        status,
+        statusText: '',
+        headers: new Headers(contentType ? { 'Content-Type': contentType } : {}),
+        json: async () => body,
+    });
+    it('is not enabled where lakeFS answers with its web page (the view is not served)', async () => {
+        globalThis.fetch = vi.fn(async () => answer(200, 'text/html; charset=utf-8', null));
+        expect(await getMeluxina()).toEqual({ enabled: false, snapshot: null, skewMs: 0 });
+    });
+    it('is not enabled on a 404', async () => {
+        globalThis.fetch = vi.fn(async () => answer(404, 'text/plain', null));
+        expect((await getMeluxina()).enabled).toBe(false);
+    });
+    it('reads the snapshot when the view answers JSON', async () => {
+        globalThis.fetch = vi.fn(async () => answer(200, 'application/json', { snapshot: snap(), server_time: null }));
+        const got = await getMeluxina();
+        expect(got.enabled).toBe(true);
+        expect(got.snapshot.space.limit_bytes).toBe(100);
+    });
+    it('still reports a real error', async () => {
+        globalThis.fetch = vi.fn(async () => answer(500, 'application/json', null));
+        await expect(getMeluxina()).rejects.toThrow('refused');
     });
 });

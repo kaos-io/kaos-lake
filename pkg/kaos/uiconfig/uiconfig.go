@@ -12,12 +12,14 @@ import (
 )
 
 // Handler answers GET /kaos/v1/ui with {"console_url": "...", "mlflow_url": "...",
-// "legacy_repository": "..."}. None is a secret, so the answer needs no sign-in (the header shows
-// before sign-in too).
+// "legacy_repository": "...", "meluxina": bool}. None is a secret, so the answer needs no sign-in
+// (the header shows before sign-in too). Meluxina says whether this lakeFS serves the MeluXina view
+// (/kaos/v1/meluxina), so the UI shows its tab only then.
 type Handler struct {
 	ConsoleURL       string
 	MLflowURL        string
 	LegacyRepository string
+	Meluxina         bool
 }
 
 // Valid reports whether u is empty (no link) or an absolute http(s) URL.
@@ -37,9 +39,10 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 		return u
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"console_url":       link(h.ConsoleURL),
 		"mlflow_url":        link(h.MLflowURL),
 		"legacy_repository": h.LegacyRepository,
+		"meluxina":          h.Meluxina,
 	})
 }

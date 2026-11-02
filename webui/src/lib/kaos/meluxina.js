@@ -19,12 +19,13 @@ export const RETENTION_RULE =
 
 /**
  * The latest snapshot: { enabled, snapshot, skewMs }. enabled is false when this lakeFS does not
- * serve it (404); skewMs is the server's clock minus the browser's, so "stale" does not depend on
- * the browser's clock being right.
+ * serve it: a 404, or the web UI's own page (an unknown path answers with index.html); skewMs is the
+ * server's clock minus the browser's, so "stale" does not depend on the browser's clock being right.
  */
 export const getMeluxina = async () => {
     const response = await fetch('/kaos/v1/meluxina', { headers: new Headers(defaultAPIHeaders) });
-    if (response.status === 404) return { enabled: false, snapshot: null, skewMs: 0 };
+    const json = (response.headers.get('Content-Type') || '').includes('application/json');
+    if (response.status === 404 || (response.ok && !json)) return { enabled: false, snapshot: null, skewMs: 0 };
     if (!response.ok) {
         throw new Error((await extractError(response)) || `${response.status} ${response.statusText}`);
     }
