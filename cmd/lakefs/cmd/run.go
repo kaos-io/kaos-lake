@@ -37,6 +37,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/httputil"
 	"github.com/treeverse/lakefs/pkg/kaos/meluxina"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
+	"github.com/treeverse/lakefs/pkg/kaos/sharing"
 	"github.com/treeverse/lakefs/pkg/kv"
 	_ "github.com/treeverse/lakefs/pkg/kv/cosmosdb"
 	_ "github.com/treeverse/lakefs/pkg/kv/dynamodb"
@@ -201,6 +202,14 @@ var runCmd = &cobra.Command{
 		// Modified by KAOS: keep the latest MeluXina staging snapshot across restarts (PRD
 		// novelcore/kaos#1283 F-10).
 		meluxina.Configure(kvStore)
+
+		// Modified by KAOS: read the datasets sibling projects share with this one (PRD
+		// novelcore/kaos#1283 F-12).
+		if sh, err := sharing.Configure(baseCfg.KAOS.Sharing, baseCfg.KAOS.TokenIdentity, logger); err != nil {
+			logger.WithError(err).Fatal("kaos.sharing")
+		} else if sh != nil {
+			go sh.Run(ctx)
+		}
 
 		// Modified by KAOS: keep the project's default dataset and each declared app's outputs
 		// repository in place (PRD novelcore/kaos#1283 F-01).

@@ -51,6 +51,11 @@ var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation}
 // projectName is one KubeProject name in kaos.shared_with.
 var projectName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
+// ValidProject reports whether name is a valid KubeProject name.
+func ValidProject(name string) bool {
+	return projectName.MatchString(name)
+}
+
 // SharedWith parses kaos.shared_with into project names; empty items are dropped.
 func SharedWith(value string) []string {
 	var out []string
@@ -306,6 +311,18 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	shares := func() {
+		if svc == nil {
+			return
+		}
+		changes, err := ReconcileShares(ctx, c, svc)
+		for _, ch := range changes {
+			log.Info(ch)
+		}
+		if err != nil {
+			log.WithError(err).Error("Dataset shares not applied")
+		}
+	}
 	for {
 		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, Desired(defaultDataset, outputs()))
 		for _, ch := range changes {
@@ -325,19 +342,18 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 				log.WithError(err).Error("Dataset branch protection not applied")
 			}
 		}
-		if svc != nil {
-			changes, err := ReconcileShares(ctx, c, svc)
-			for _, ch := range changes {
-				log.Info(ch)
+		shares()
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				break wait
+			case <-kicks:
+				// A dataset was just shared or unshared (Kick): apply it now, not at the next tick.
+				shares()
 			}
-			if err != nil {
-				log.WithError(err).Error("Dataset shares not applied")
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
 		}
 	}
 }

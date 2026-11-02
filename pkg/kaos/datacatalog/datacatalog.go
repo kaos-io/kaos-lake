@@ -1,8 +1,10 @@
-// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-07, D-05): new file, Apache-2.0.
+// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-07, D-05, F-12): new file, Apache-2.0.
 
 // Package datacatalog serves the project's datasets and their versions, read-only, to the trusted
 // step that offers them in pipelines' dataset dropdown: names, versions and locations, never data.
-// Callers are pods of the project's own namespaces, by their service-account token.
+// Callers are pods of the project's own namespaces, by their service-account token. With sharing
+// on (pkg/kaos/sharing), the datasets sibling projects share with this one follow the project's
+// own, named <owner>/<dataset>.
 package datacatalog
 
 import (
@@ -35,7 +37,9 @@ type Version struct {
 
 // Dataset is one dataset of the catalog.
 type Dataset struct {
-	Name        string    `json:"name"`
+	Name string `json:"name"`
+	// Owner is the project a shared dataset belongs to; empty for the project's own datasets.
+	Owner       string    `json:"owner,omitempty"`
 	Default     bool      `json:"default,omitempty"`
 	Description string    `json:"description,omitempty"`
 	Location    string    `json:"location,omitempty"`
@@ -47,6 +51,25 @@ var versionTag = regexp.MustCompile(`^v(\d+)$`)
 
 // List returns the datasets (dataset-* repositories labelled a dataset) with their versions.
 func List(ctx context.Context, c Catalog) ([]Dataset, error) {
+	return list(ctx, c, func(graveler.RepositoryMetadata) bool { return true })
+}
+
+// SharedWith returns the datasets whose kaos.shared_with names one of projects, as another project
+// sees them: never the default, and nothing about who else they are shared with.
+func SharedWith(ctx context.Context, c Catalog, projects []string) ([]Dataset, error) {
+	out, err := list(ctx, c, func(md graveler.RepositoryMetadata) bool {
+		return slices.ContainsFunc(repos.SharedWith(md[repos.KeySharedWith]), func(p string) bool {
+			return slices.Contains(projects, p)
+		})
+	})
+	for i := range out {
+		out[i].Default = false
+	}
+	return out, err
+}
+
+// list returns the datasets whose metadata keep accepts.
+func list(ctx context.Context, c Catalog, keep func(graveler.RepositoryMetadata) bool) ([]Dataset, error) {
 	var out []Dataset
 	after := ""
 	for {
@@ -60,7 +83,7 @@ func List(ctx context.Context, c Catalog) ([]Dataset, error) {
 			if err != nil {
 				return nil, err
 			}
-			if md[repos.KeyKind] != repos.KindDataset {
+			if md[repos.KeyKind] != repos.KindDataset || !keep(md) {
 				continue
 			}
 			d := Dataset{Name: r.Name, Default: md[repos.KeyDefault] == "true",
@@ -107,6 +130,10 @@ type Handler struct {
 	Catalog    Catalog
 	Verify     func(ctx context.Context, token string, namespaces []string) (string, error)
 	Namespaces []string
+	// Shared, when set, returns the datasets sibling projects share with this one, named
+	// <owner>/<dataset>, to list after the project's own (pkg/kaos/sharing). It never fails: a
+	// peer that cannot be read is left out.
+	Shared func(ctx context.Context) []Dataset
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +150,9 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
 		return
+	}
+	if h.Shared != nil {
+		datasets = append(datasets, h.Shared(r.Context())...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"datasets": datasets})
 }

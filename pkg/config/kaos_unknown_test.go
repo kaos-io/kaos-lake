@@ -4,6 +4,7 @@ package config_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -36,4 +37,36 @@ func TestKaosMLflowURL(t *testing.T) {
 	baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
 	require.NoError(t, err)
 	require.Equal(t, "https://mlflow.kaos.eu", baseCfg.KAOS.UI.MLflowURL)
+}
+
+// kaos.sharing (PRD novelcore/kaos#1283 F-12) is its own block with its own catch-all: a newer
+// chart's kaos.sharing.* key must not stop the server, and the known keys still decode.
+func TestKaosSharingUnknownSubKey(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	viper.Set("kaos.sharing.peers_path", "/etc/kaos-lake/peers/peers.json")
+	viper.Set("kaos.sharing.machine_key_path", "/etc/kaos-lake/machine-key/ZITADEL_MACHINE_KEY")
+	viper.Set("kaos.sharing.cache_ttl", "30s")
+	viper.Set("kaos.sharing.some_future_key", map[string]any{"x": 1})
+	baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	s := baseCfg.KAOS.Sharing
+	require.Equal(t, "/etc/kaos-lake/peers/peers.json", s.PeersPath)
+	require.Equal(t, "/etc/kaos-lake/machine-key/ZITADEL_MACHINE_KEY", s.MachineKeyPath)
+	require.Equal(t, 30*time.Second, s.CacheTTL)
+	require.Zero(t, s.Interval, "defaults are applied by pkg/kaos/sharing, not here")
+	require.Contains(t, s.Unknown, "some_future_key")
+}
+
+// Without a kaos.sharing block the feature is off: nothing is set.
+func TestKaosSharingAbsentIsOff(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	require.Empty(t, baseCfg.KAOS.Sharing.PeersPath)
+	require.Empty(t, baseCfg.KAOS.Sharing.MachineKeyPath)
+	require.Zero(t, baseCfg.KAOS.Sharing.Interval)
+	require.Zero(t, baseCfg.KAOS.Sharing.CacheTTL)
+	require.Empty(t, baseCfg.KAOS.Unknown)
 }

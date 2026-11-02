@@ -2558,7 +2558,8 @@ func (c *Controller) SetRepositoryMetadata(w http.ResponseWriter, r *http.Reques
 		writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	if _, sharing := body.Metadata.AdditionalProperties[repos.KeySharedWith]; sharing && !c.authorizeSharing(w, r, repository) {
+	_, sharing := body.Metadata.AdditionalProperties[repos.KeySharedWith]
+	if sharing && !c.authorizeSharing(w, r, repository) {
 		return
 	}
 	ctx := r.Context()
@@ -2566,6 +2567,11 @@ func (c *Controller) SetRepositoryMetadata(w http.ResponseWriter, r *http.Reques
 	err := c.Catalog.UpdateRepositoryMetadata(ctx, repository, body.Metadata.AdditionalProperties)
 	if c.handleAPIError(ctx, w, r, err) {
 		return
+	}
+	// Modified by KAOS: a share reaches the consuming project's group at once (PRD
+	// novelcore/kaos#1283 F-12).
+	if sharing {
+		repos.Kick()
 	}
 	writeResponse(w, r, http.StatusNoContent, nil)
 }
@@ -2584,7 +2590,8 @@ func (c *Controller) DeleteRepositoryMetadata(w http.ResponseWriter, r *http.Req
 		writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	if slices.Contains(body.Keys, repos.KeySharedWith) && !c.authorizeSharing(w, r, repository) {
+	sharing := slices.Contains(body.Keys, repos.KeySharedWith)
+	if sharing && !c.authorizeSharing(w, r, repository) {
 		return
 	}
 	ctx := r.Context()
@@ -2592,6 +2599,10 @@ func (c *Controller) DeleteRepositoryMetadata(w http.ResponseWriter, r *http.Req
 	err := c.Catalog.DeleteRepositoryMetadata(ctx, repository, body.Keys)
 	if c.handleAPIError(ctx, w, r, err) {
 		return
+	}
+	// Modified by KAOS: an unshare reaches the consuming project's group at once (F-12).
+	if sharing {
+		repos.Kick()
 	}
 	writeResponse(w, r, http.StatusNoContent, nil)
 }
