@@ -224,7 +224,7 @@ func TestReconcile_LabelsHandmadeDatasets(t *testing.T) {
 	f.add("dataset-cars", nil)
 	f.add("dataset-trucks", map[string]string{repos.KeyDescription: "ours"})
 	f.add("dataset-ab", nil)
-	f.add("dataset-made", map[string]string{repos.KeyKind: repos.KindDataset, repos.KeyTemplate: "ultralytics"})
+	f.add("dataset-made", map[string]string{repos.KeyKind: repos.KindDataset, repos.KeyTemplate: "yolo"})
 	f.add("scratch", nil)
 	f.add("dataset-fresh", nil)
 	f.empty["dataset-fresh"] = true
@@ -233,7 +233,7 @@ func TestReconcile_LabelsHandmadeDatasets(t *testing.T) {
 	require.Equal(t, repos.KindDataset, f.md["dataset-cars"][repos.KeyKind])
 	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: repos.KindDataset, repos.KeyDescription: "ours"}, f.md["dataset-trucks"])
 	require.Empty(t, f.md["dataset-ab"])
-	require.Equal(t, "ultralytics", f.md["dataset-made"][repos.KeyTemplate])
+	require.Equal(t, "yolo", f.md["dataset-made"][repos.KeyTemplate])
 	require.Empty(t, f.md["scratch"])
 	require.Empty(t, f.md["dataset-fresh"], "an empty repository is labelled only after its first commit")
 	require.Contains(t, changes, "labelled dataset-cars a dataset: made without a template")

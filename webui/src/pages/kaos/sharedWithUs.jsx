@@ -27,7 +27,7 @@ export const SharedDatasetRow = ({ dataset }) => {
                     </h5>
                     {dataset.description && <div className="text-muted">{dataset.description}</div>}
                     <div className="small text-muted mt-1">
-                        {dataset.template ? `Template: ${templateTitle(dataset.template)} · ` : ''}
+                        {dataset.template ? `Layout: ${templateTitle(dataset.template)} · ` : ''}
                         {latest
                             ? `Latest version: ${latest.tag} (${(latest.commit || '').slice(0, 12)})`
                             : 'No version released yet'}

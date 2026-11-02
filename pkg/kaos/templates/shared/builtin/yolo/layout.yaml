@@ -1,0 +1,97 @@
+# Built-in layout: images with one YOLO txt annotation file per image.
+# Shared byte for byte by kaos-lib and kaos-lake; the spec is ../../layout.schema.json.
+# The hook adds what rules cannot say (class ids against names, value counts, coordinates in 0..1);
+# only kaos-lib runs it.
+layout: 1
+name: yolo
+title: YOLO (txt annotations)
+description: Images and one YOLO txt label file per image, split into train, val and test, with a data.yaml naming the splits and the classes.
+version: "1"
+parameters:
+  - key: classes
+    label: Class names
+    type: list
+    required: true
+    help: "One per line, in label-id order: the first class is id 0."
+    form_key: names
+form_file: data.yaml
+skeleton:
+  folders: [images/train, images/val, images/test, labels/train, labels/val, labels/test]
+  files:
+    data.yaml: |
+      # YOLO txt dataset. Paths are relative to the dataset's root.
+      path: .
+      train: images/train
+      val: images/val
+      test: images/test
+      nc: {{classes|count}}
+      names:
+      {{#each classes}}
+        {{@index}}: {{@item|quote}}
+      {{/each}}
+    README.md: |
+      # {{name}}
+
+      {{#if description}}
+      {{description}}
+
+      {{/if}}
+      A dataset in the `yolo` layout: images, and one YOLO txt label file per image.
+
+      - `images/{train,val,test}/`: the images.
+      - `labels/{train,val,test}/`: one `.txt` per image, same name: `<class-id> <x> <y> <w> <h>` per
+        object, coordinates relative to the image (0 to 1). Segmentation lines are
+        `<class-id> x1 y1 x2 y2 ...`; pose adds the keypoints of `kpt_shape`.
+      - `data.yaml`: the split folders and the {{classes|count}} class names, which pipelines read. Edit
+        it in the lakeFS UI (Edit), so a change goes through a pull request.
+
+      ## Add data and release a version
+
+      Main of a dataset changes only when a pull request is merged. In the lakeFS UI, create a branch,
+      upload to it and open a pull request; or use `kaos-cli` (`pip install kaos-lib`):
+
+      ```
+      kaos-cli login
+      kaos-cli layout validate <folder> --layout yolo
+      kaos-cli dataset push <folder> {{name}} -m "Add the first images"   # opens a pull request
+      kaos-cli dataset release {{name}}                                   # tags main as the next version
+      kaos-cli dataset pull {{name}}@v1 [dest]                            # download a version
+      ```
+
+      Pipelines offer every released version in their dataset dropdown: the parameter is
+      `{{name}}@<version>`.
+rules:
+  required: [data.yaml, "images/**"]
+  pairs:
+    - files: "images/**"
+      extensions: [.jpg, .jpeg, .png, .bmp, .tif, .tiff, .webp]
+      needs: "labels/{stem}.txt"
+  lines:
+    - files: "labels/**/*.txt"
+      pattern: '[0-9]+([ \t]+[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?)+'
+      message: "expected '<class-id> <x> <y> <w> <h> ...': an integer class id, then numbers"
+  manifests:
+    - file: data.yaml
+      schema:
+        type: object
+        required: [train, val, names]
+        properties:
+          path: {type: string}
+          train: {type: string, pattern: '^/?images/[^/]'}
+          val: {type: string, pattern: '^/?images/[^/]'}
+          test: {type: [string, "null"], pattern: '^/?images/[^/]'}
+          nc: {type: integer, minimum: 1}
+          names:
+            type: [array, object]
+            minItems: 1
+            minProperties: 1
+            items: {type: [string, integer, number]}
+            additionalProperties: {type: [string, integer, number]}
+          kpt_shape:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items: {type: integer, minimum: 1}
+materialize:
+  include: [data.yaml, "images/**", "labels/**"]
+hook: kaos_lib.layouts.yolo

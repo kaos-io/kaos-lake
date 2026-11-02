@@ -20,7 +20,7 @@ const roads = {
     repo: 'dataset-roads',
     location: 'europe-west1 · Belgium',
     description: 'Roads at night',
-    template: 'ultralytics',
+    template: 'ultralytics', // a legacy label shows as yolo
     latest: 'h1',
     versions: [
         { tag: 'v2', commit: 'c2c2c2c2c2c2c2c2' },
@@ -60,7 +60,7 @@ describe('Shared with this project', () => {
         expect(badge.style.backgroundColor).toBe(PURPOSE_COLOURS.shared);
         expect(screen.getByText('📍 europe-west1 · Belgium')).toBeTruthy();
         expect(screen.getByText('Roads at night')).toBeTruthy();
-        expect(screen.getByText(/Template: Ultralytics \(YOLO object detection\)/)).toBeTruthy();
+        expect(screen.getByText(/Layout: YOLO \(txt annotations\)/)).toBeTruthy();
         expect(screen.getByText(/Latest version: v2 \(c2c2c2c2c2c2\)/)).toBeTruthy();
         expect(screen.getByText('dataset = cars/dataset-roads@v2')).toBeTruthy();
 

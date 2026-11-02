@@ -27,7 +27,7 @@ func sharedWithUs(t *testing.T, h sharing.SharedWithUsHandler) (string, sharing.
 // note for each owner that is too old or down. Nothing about tokens, endpoints or other consumers.
 func TestSharedWithUsHandler(t *testing.T) {
 	cars := newPeer(t, "cars", `{"owner":"cars","datasets":[{"name":"dataset-roads","default":true,"description":"roads",
-	 "location":"europe-west1 · Belgium","template":"ultralytics","latest":"h1","versions":[{"tag":"v2","commit":"c2"},{"tag":"v1","commit":"c1"}]}]}`)
+	 "location":"europe-west1 · Belgium","template":"yolo","latest":"h1","versions":[{"tag":"v2","commit":"c2"},{"tag":"v1","commit":"c1"}]}]}`)
 	orbits := newPeer(t, "orbits", `{"owner":"orbits","datasets":[{"name":"dataset-stars","versions":[]}]}`)
 	old := newPeer(t, "old", "")
 	old.set(http.StatusNotFound, "")
@@ -38,7 +38,7 @@ func TestSharedWithUsHandler(t *testing.T) {
 	raw, _ := sharedWithUs(t, sharing.SharedWithUsHandler{Project: "vision", Aggregator: a})
 	require.JSONEq(t, `{"project":"vision","datasets":[
 	 {"name":"cars/dataset-roads","owner":"cars","repo":"dataset-roads","location":"europe-west1 · Belgium","description":"roads",
-	  "template":"ultralytics","latest":"h1","versions":[{"tag":"v2","commit":"c2"},{"tag":"v1","commit":"c1"}],
+	  "template":"yolo","latest":"h1","versions":[{"tag":"v2","commit":"c2"},{"tag":"v1","commit":"c1"}],
 	  "url":"https://lakefs-cars.acme.kaos.eu/repositories/dataset-roads/objects"},
 	 {"name":"orbits/dataset-stars","owner":"orbits","repo":"dataset-stars","versions":[],
 	  "url":"https://lakefs-orbits.acme.kaos.eu/repositories/dataset-stars/objects"}],

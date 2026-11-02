@@ -20,7 +20,7 @@ type fake struct{}
 
 var repos = map[string]graveler.RepositoryMetadata{
 	"dataset-cars": {"kaos.kind": "dataset", "kaos.location": "europe-west1 · Belgium", "kaos.description": "cars",
-		"kaos.template": "ultralytics"},
+		"kaos.template": "yolo"},
 	"dataset-default": {"kaos.kind": "dataset", "kaos.default": "true"},
 	"dataset-draft":   {}, // a dataset- name nobody labelled: not offered
 }
@@ -46,7 +46,7 @@ func TestList(t *testing.T) {
 	got, err := datacatalog.List(t.Context(), fake{})
 	require.NoError(t, err)
 	require.Equal(t, []datacatalog.Dataset{
-		{Name: "dataset-cars", Description: "cars", Location: "europe-west1 · Belgium", Template: "ultralytics", Latest: "head-dataset-cars",
+		{Name: "dataset-cars", Description: "cars", Location: "europe-west1 · Belgium", Template: "yolo", Latest: "head-dataset-cars",
 			Versions: []datacatalog.Version{{Tag: "v10", Commit: "c10"}, {Tag: "v2", Commit: "c2"}}},
 		{Name: "dataset-default", Default: true, Latest: "head-dataset-default", Versions: []datacatalog.Version{}},
 	}, got)

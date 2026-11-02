@@ -1,0 +1,115 @@
+# Skeletons both implementations must render to exactly these files ({path: text}, folders as <folder>/.keep),
+# or refuse (error: a part of the message). builtin: names a layout of shared/builtin; layout: an inline one.
+- case: yolo with a description
+  builtin: yolo
+  name: dataset-cars
+  description: "  Cars and trucks  "
+  values: {classes: [car, " tr\"uck ", "", "été"]}
+  files:
+    images/test/.keep: ""
+    images/train/.keep: ""
+    images/val/.keep: ""
+    labels/test/.keep: ""
+    labels/train/.keep: ""
+    labels/val/.keep: ""
+    data.yaml: |
+      # YOLO txt dataset. Paths are relative to the dataset's root.
+      path: .
+      train: images/train
+      val: images/val
+      test: images/test
+      nc: 3
+      names:
+        0: "car"
+        1: "tr\"uck"
+        2: "été"
+    README.md: |
+      # dataset-cars
+
+      Cars and trucks
+
+      A dataset in the `yolo` layout: images, and one YOLO txt label file per image.
+
+      - `images/{train,val,test}/`: the images.
+      - `labels/{train,val,test}/`: one `.txt` per image, same name: `<class-id> <x> <y> <w> <h>` per
+        object, coordinates relative to the image (0 to 1). Segmentation lines are
+        `<class-id> x1 y1 x2 y2 ...`; pose adds the keypoints of `kpt_shape`.
+      - `data.yaml`: the split folders and the 3 class names, which pipelines read. Edit
+        it in the lakeFS UI (Edit), so a change goes through a pull request.
+
+      ## Add data and release a version
+
+      Main of a dataset changes only when a pull request is merged. In the lakeFS UI, create a branch,
+      upload to it and open a pull request; or use `kaos-cli` (`pip install kaos-lib`):
+
+      ```
+      kaos-cli login
+      kaos-cli layout validate <folder> --layout yolo
+      kaos-cli dataset push <folder> dataset-cars -m "Add the first images"   # opens a pull request
+      kaos-cli dataset release dataset-cars                                   # tags main as the next version
+      kaos-cli dataset pull dataset-cars@v1 [dest]                            # download a version
+      ```
+
+      Pipelines offer every released version in their dataset dropdown: the parameter is
+      `dataset-cars@<version>`.
+- case: raw without a description
+  builtin: raw
+  name: dataset-misc
+  files:
+    README.md: |
+      # dataset-misc
+
+      A dataset on KAOS. Upload data with the lakeFS UI (a branch and a pull request) or
+      `kaos-cli dataset push <folder> dataset-misc -m "first files"`, then release a version so pipelines can pick it.
+- case: yolo needs a class
+  builtin: yolo
+  name: dataset-cars
+  values: {classes: ["  ", ""]}
+  error: "Class names needs at least one item"
+- case: list items are unique
+  builtin: yolo
+  name: dataset-cars
+  values: {classes: [car, " car"]}
+  error: "is listed twice"
+- case: a list is a list of text
+  builtin: yolo
+  name: dataset-cars
+  values: {classes: car}
+  error: "Class names must be a list of text"
+- case: placeholders, quoting and nested blocks
+  layout:
+    layout: 1
+    name: mini
+    title: Mini
+    parameters:
+      - {key: tags, label: Tags, type: list}
+      - {key: owner, label: Owner, type: text, required: true}
+      - {key: note, label: Note, type: text}
+    skeleton:
+      folders: [a/b]
+      files:
+        x.txt: "{{owner}} {{owner|quote}} n={{tags|count}}\n{{#each tags}}\n- {{@index}} {{@item}}{{#if note}} ({{note}}){{/if}}\n{{/each}}\n{{#if tags}}\nhas tags\n{{/if}}\n{{#if note}}\nnote\n{{/if}}\nend {{ name }}"
+        q.json: '{"v": {{owner|quote}}}'
+  name: dataset-q
+  values: {owner: "  a \"b\"\\c\t ", tags: [x, y], note: N, unknown: ignored}
+  files:
+    a/b/.keep: ""
+    q.json: '{"v": "a \"b\"\\c"}'
+    x.txt: "a \"b\"\\c \"a \\\"b\\\"\\\\c\" n=2\n- 0 x (N)\n- 1 y (N)\nhas tags\nnote\nend dataset-q"
+- case: empty list, empty text
+  layout:
+    layout: 1
+    name: mini
+    title: Mini
+    parameters: [{key: tags, label: Tags, type: list}, {key: note, label: Note, type: text}]
+    skeleton:
+      files:
+        x.txt: "[{{#each tags}}{{@item}},{{/each}}]\n{{#if tags}}\nno\n{{/if}}\n{{#if note}}no{{/if}}ok {{note|quote}}\n"
+  name: dataset-q
+  files:
+    x.txt: "[]\nok \"\"\n"
+- case: text is one line
+  layout: {layout: 1, name: mini, title: Mini, parameters: [{key: note, label: Note, type: text, required: true}]}
+  name: dataset-q
+  values: {note: "  "}
+  error: "Note is required"

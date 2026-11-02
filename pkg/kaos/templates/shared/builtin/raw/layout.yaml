@@ -1,0 +1,18 @@
+# Built-in layout: any files, no rules. Datasets without a known kaos.template label read as raw.
+# Shared byte for byte by kaos-lib and kaos-lake; the spec is ../../layout.schema.json.
+layout: 1
+name: raw
+title: Raw (any files)
+description: Only a README; you choose the layout. Nothing is checked, and a pull downloads the whole tree.
+version: "1"
+skeleton:
+  files:
+    README.md: |
+      # {{name}}
+
+      {{#if description}}
+      {{description}}
+
+      {{/if}}
+      A dataset on KAOS. Upload data with the lakeFS UI (a branch and a pull request) or
+      `kaos-cli dataset push <folder> {{name}} -m "first files"`, then release a version so pipelines can pick it.

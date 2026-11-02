@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kaos-io/kaos-lib/blob/main/src/kaos_lib/layouts/shared/layout.schema.json",
+  "title": "KAOS dataset layout (layout.yaml), spec version 1",
+  "description": "Shared byte for byte by kaos-lib (src/kaos_lib/layouts/shared) and kaos-lake (pkg/kaos/templates/shared). It uses only the keywords both implementations evaluate: type, enum, required, properties, additionalProperties, items, minItems, maxItems, minProperties, maxProperties, minimum, maximum, minLength, maxLength, pattern. Rules no schema can say (unique keys, paths inside the dataset, patterns that compile) are checked in code, the same way in both.",
+  "type": "object",
+  "required": ["layout", "name", "title"],
+  "additionalProperties": false,
+  "properties": {
+    "layout": {"description": "Version of this spec.", "type": "integer", "enum": [1]},
+    "name": {"description": "The layout's id: the kaos.template label of datasets made with it.", "type": "string", "pattern": "^[a-z][a-z0-9-]{1,39}$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 80},
+    "description": {"type": "string", "maxLength": 1000},
+    "version": {"description": "The layout's own version, free form.", "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$"},
+    "parameters": {
+      "description": "Values asked when a dataset is created; skeleton files use them.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["key", "label", "type"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+          "label": {"type": "string", "minLength": 1, "maxLength": 80},
+          "type": {"description": "text: one line; list: one item per line.", "enum": ["text", "list"]},
+          "required": {"type": "boolean"},
+          "help": {"type": "string", "maxLength": 300},
+          "form_key": {"description": "Top-level key of form_file that holds this value, for editing.", "type": "string", "minLength": 1, "maxLength": 80}
+        }
+      }
+    },
+    "form_file": {"description": "File read back into the parameters when a dataset is edited.", "type": "string", "minLength": 1, "maxLength": 200},
+    "skeleton": {
+      "description": "What create writes: empty folders and files whose text may use {{placeholders}}.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "folders": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
+        "files": {"type": "object", "maxProperties": 50, "additionalProperties": {"type": "string", "maxLength": 65536}}
+      }
+    },
+    "rules": {
+      "description": "Declarative validation. kaos-lib and kaos-lake both evaluate these.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {"description": "Each pattern must match at least one file.", "type": "array", "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
+        "allowed": {"description": "When set, every file must match one of these patterns.", "type": "array", "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 200}},
+        "extensions": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["files", "allowed"],
+            "additionalProperties": false,
+            "properties": {
+              "files": {"type": "string", "minLength": 1, "maxLength": 200},
+              "allowed": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "pattern": "^\\.[A-Za-z0-9_+-]{1,20}$"}}
+            }
+          }
+        },
+        "pairs": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["files", "needs"],
+            "additionalProperties": false,
+            "properties": {
+              "files": {"type": "string", "minLength": 1, "maxLength": 200},
+              "extensions": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "pattern": "^\\.[A-Za-z0-9_+-]{1,20}$"}},
+              "needs": {"description": "The partner file; {stem} is the matched path below the pattern's fixed folders, without its extension.", "type": "string", "pattern": "\\{stem\\}", "maxLength": 200}
+            }
+          }
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["files", "pattern"],
+            "additionalProperties": false,
+            "properties": {
+              "files": {"type": "string", "minLength": 1, "maxLength": 200},
+              "pattern": {"description": "Every non-blank line, trimmed, must match all of it (RE2 syntax shared by Go and Python: no lookaround, no backreferences).", "type": "string", "minLength": 1, "maxLength": 500},
+              "message": {"type": "string", "minLength": 1, "maxLength": 200}
+            }
+          }
+        },
+        "manifests": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["file", "schema"],
+            "additionalProperties": false,
+            "properties": {
+              "file": {"type": "string", "minLength": 1, "maxLength": 200},
+              "schema": {"description": "A schema for the file's YAML, in the keywords this file uses.", "type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "materialize": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {"description": "Download only the files these patterns match (default: everything).", "type": "array", "minItems": 1, "maxItems": 50, "items": {"type": "string", "minLength": 1, "maxLength": 200}}
+      }
+    },
+    "hook": {
+      "description": "Python module (module or module:object) with validate() and/or materialize(). Only kaos-lib runs it; kaos-lake never runs code from a layout.",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*(:[A-Za-z_][A-Za-z0-9_]*)?$",
+      "maxLength": 200
+    }
+  }
+}

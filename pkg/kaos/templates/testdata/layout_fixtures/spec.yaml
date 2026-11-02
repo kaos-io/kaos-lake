@@ -1,0 +1,117 @@
+# Layout specs both implementations must accept (ok: true) or refuse (error: a part of the message).
+# Shared byte for byte by kaos-lib (tests/layout_fixtures) and kaos-lake (pkg/kaos/templates/testdata/layout_fixtures).
+- case: the smallest layout
+  layout: {layout: 1, name: tiny, title: Tiny}
+  ok: true
+- case: every field
+  layout:
+    layout: 1
+    name: full-x
+    title: Full
+    description: Everything the spec has.
+    version: "2.1"
+    parameters:
+      - {key: classes, label: Classes, type: list, required: true, help: one per line, form_key: names}
+      - {key: owner, label: Owner, type: text}
+    form_file: meta.yaml
+    skeleton:
+      folders: [data, data/extra]
+      files:
+        meta.yaml: "owner: {{owner|quote}}\nnames:\n{{#each classes}}\n  - {{@item|quote}}\n{{/each}}\n"
+    rules:
+      required: [meta.yaml, "data/**"]
+      allowed: [meta.yaml, README.md, "data/**"]
+      extensions: [{files: "data/**", allowed: [.json, .JSON]}]
+      pairs: [{files: "data/**", extensions: [.json], needs: "labels/{stem}.txt"}]
+      lines: [{files: "labels/**/*.txt", pattern: '[a-z]+', message: lower-case words}]
+      manifests: [{file: meta.yaml, schema: {type: object, required: [names]}}]
+    materialize: {include: [meta.yaml, "data/**"]}
+    hook: my_pkg.layouts:hook
+  ok: true
+- case: spec version is required
+  layout: {name: tiny, title: Tiny}
+  error: "(root): layout is required"
+- case: only spec version 1
+  layout: {layout: 2, name: tiny, title: Tiny}
+  error: "layout: must be one of 1"
+- case: unknown field
+  layout: {layout: 1, name: tiny, title: Tiny, colour: red}
+  error: "colour: is not allowed"
+- case: name is lower-case
+  layout: {layout: 1, name: Tiny, title: Tiny}
+  error: "name: does not match"
+- case: name none is reserved
+  layout: {layout: 1, name: none, title: None}
+  error: "name: none is reserved"
+- case: parameter type
+  layout: {layout: 1, name: tiny, title: T, parameters: [{key: a, label: A, type: number}]}
+  error: "parameters[0].type: must be one of text, list"
+- case: parameter keys are unique
+  layout: {layout: 1, name: tiny, title: T, parameters: [{key: a, label: A, type: text}, {key: a, label: B, type: list}]}
+  error: "parameters[1].key: a is used twice"
+- case: name and description are reserved keys
+  layout: {layout: 1, name: tiny, title: T, parameters: [{key: name, label: N, type: text}]}
+  error: "parameters[0].key: name is reserved"
+- case: form_key needs form_file
+  layout: {layout: 1, name: tiny, title: T, parameters: [{key: a, label: A, type: list, form_key: a}]}
+  error: "parameters[0].form_key: the layout has no form_file"
+- case: skeleton paths stay inside the dataset
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {"../x": hi}}}
+  error: "skeleton.files.../x: ../x is not a relative path inside the dataset"
+- case: absolute folder
+  layout: {layout: 1, name: tiny, title: T, skeleton: {folders: [/data]}}
+  error: "skeleton.folders[0]: /data is not a relative path inside the dataset"
+- case: unknown placeholder
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "{{colour}}"}}}
+  error: "skeleton.files.a.txt: unknown value colour"
+- case: a list needs each or count
+  layout: {layout: 1, name: tiny, title: T, parameters: [{key: c, label: C, type: list}], skeleton: {files: {a.txt: "{{c}}"}}}
+  error: "c is a list"
+- case: count needs a list
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "{{name|count}}"}}}
+  error: "count needs a list"
+- case: unknown filter
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "{{name|upper}}"}}}
+  error: "unknown filter upper"
+- case: unclosed block
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "{{#if description}}x"}}}
+  error: "is not closed"
+- case: stray close
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "x{{/each}}"}}}
+  error: "closes nothing"
+- case: loop values only inside each
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "{{@item}}"}}}
+  error: "@item is only known inside"
+- case: malformed placeholder
+  layout: {layout: 1, name: tiny, title: T, skeleton: {files: {a.txt: "{{ two words }}"}}}
+  error: "is not a placeholder"
+- case: double star is a whole level
+  layout: {layout: 1, name: tiny, title: T, rules: {required: ["data/a**"]}}
+  error: "rules.required[0]: data/a**: ** must be a whole folder level"
+- case: pattern outside the dataset
+  layout: {layout: 1, name: tiny, title: T, rules: {lines: [{files: "../*.txt", pattern: x}]}}
+  error: "rules.lines[0].files: ../*.txt is not a relative pattern inside the dataset"
+- case: pairs need stem
+  layout: {layout: 1, name: tiny, title: T, rules: {pairs: [{files: "a/*", needs: "b/x.txt"}]}}
+  error: "rules.pairs[0].needs: does not match"
+- case: regular expressions compile
+  layout: {layout: 1, name: tiny, title: T, rules: {lines: [{files: "*.txt", pattern: "([a-z"}]}}
+  error: "rules.lines[0].pattern: does not compile"
+- case: no lookaround (Go cannot)
+  layout: {layout: 1, name: tiny, title: T, rules: {lines: [{files: "*.txt", pattern: "a(?=b)"}]}}
+  error: "rules.lines[0].pattern: lookaround and backreferences are not supported"
+- case: no backreferences
+  layout: {layout: 1, name: tiny, title: T, rules: {lines: [{files: "*.txt", pattern: '(a)\1'}]}}
+  error: "lookaround and backreferences are not supported"
+- case: manifest schema keywords
+  layout: {layout: 1, name: tiny, title: T, rules: {manifests: [{file: m.yaml, schema: {type: object, oneOf: []}}]}}
+  error: "rules.manifests[0].schema: keyword oneOf is not supported"
+- case: manifest schema type names
+  layout: {layout: 1, name: tiny, title: T, rules: {manifests: [{file: m.yaml, schema: {properties: {a: {type: text}}}}]}}
+  error: "rules.manifests[0].schema.properties.a: type must name"
+- case: hook is a module path
+  layout: {layout: 1, name: tiny, title: T, hook: "os system"}
+  error: "hook: does not match"
+- case: extensions start with a dot
+  layout: {layout: 1, name: tiny, title: T, rules: {extensions: [{files: "*", allowed: [jpg]}]}}
+  error: "rules.extensions[0].allowed[0]: does not match"

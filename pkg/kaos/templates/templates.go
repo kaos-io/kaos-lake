@@ -1,232 +1,217 @@
-// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-04/F-05): new file, Apache-2.0.
+// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-04/F-05; dataset layouts): new file, Apache-2.0.
 
-// Package templates holds the dataset templates (PRD novelcore/kaos#1283 D-06) and renders them:
-// form values in, the files of a new dataset out, or a dataset's form file back to form values for
-// editing. It writes nothing: the UI and the CLI commit the files with the person's own identity.
+// Package templates serves the dataset layouts (the "dataset templates" of the UI and the CLI):
+// the built-in ones (shared/builtin: yolo, raw, the same files kaos-lib ships) and the project's
+// own, from main of the project's lakeFS repository "layouts" (<name>/layout.yaml each). A layout
+// is a declarative spec (shared/layout.schema.json). This package renders a new dataset's files
+// from one, reads a dataset's form file back into its values, and checks a dataset against the
+// layout's declarative rules. It writes nothing: the UI and the CLI commit the files with the
+// person's own identity. It never runs a layout's Python hook; kaos-lib does that.
 package templates
 
 import (
-	"bytes"
+	"context"
 	"embed"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"path"
 	"slices"
-	"strconv"
+	"sort"
 	"strings"
-	"text/template"
-
-	"gopkg.in/yaml.v3"
+	"sync"
 
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
 )
 
-//go:embed defs
-var defs embed.FS
+//go:embed shared
+var shared embed.FS
 
-// aliases keep old template names working: "yolo" was renamed "ultralytics" because the format is
-// Ultralytics' (callers and datasets labelled kaos.template=yolo keep working).
-var aliases = map[string]string{"yolo": "ultralytics"}
+// Sources of a layout.
+const (
+	SourceBuiltin = "builtin"
+	SourceProject = "project"
+)
 
-// Canonical returns the current name of the template called name (an alias resolves, any other
-// name is returned as it is).
+// legacy holds ids datasets may still carry from before a layout got its current name: they
+// resolve to that layout and are never listed.
+var legacy = map[string]string{"ultralytics": "yolo", "empty": "raw"}
+
+// Canonical returns the current name of a layout id.
 func Canonical(name string) string {
-	if c, ok := aliases[name]; ok {
+	if c, ok := legacy[name]; ok {
 		return c
 	}
 	return name
 }
 
-var ErrInvalid = errors.New("invalid dataset template values")
-
-// Field is one input of a template's form.
-type Field struct {
-	Key      string `json:"key"`
-	Label    string `json:"label"`
-	Type     string `json:"type"` // "list" (one item per line) or "text"
-	Required bool   `json:"required,omitempty"`
-	Help     string `json:"help,omitempty"`
-}
-
-// Template is one dataset template.
-type Template struct {
+// Layout is one layout as the API serves it: what the New dataset page shows, and the whole spec
+// for kaos-lib.
+type Layout struct {
 	Name        string   `json:"name"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
-	Fields      []Field  `json:"fields"`
-	FormFile    string   `json:"form_file,omitempty"` // the file Parse reads back into the form
+	Version     string   `json:"version,omitempty"`
+	Source      string   `json:"source"`
+	Parameters  []Param  `json:"parameters"`
+	FormFile    string   `json:"form_file,omitempty"`
 	Files       []string `json:"files"`
+	// Hook names the layout's Python hook, which only kaos-lib runs; kaos-lake checks the
+	// declarative rules only.
+	Hook string `json:"hook,omitempty"`
+	Spec Spec   `json:"spec"`
 }
 
-// File is one rendered file of a new dataset.
-type File struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
-// All returns the templates, in name order.
-func All() ([]Template, error) {
-	entries, err := defs.ReadDir("defs")
-	if err != nil {
-		return nil, err
+func newLayout(s Spec, source string) Layout {
+	files, _ := RenderSpec(s, "dataset-x", "", sampleValues(s))
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
 	}
-	var out []Template
-	for _, e := range entries {
-		t, err := Get(e.Name())
+	params := s.Params()
+	if params == nil {
+		params = []Param{}
+	}
+	return Layout{Name: s.Name(), Title: s.str("title"), Description: s.str("description"), Version: s.str("version"),
+		Source: source, Parameters: params, FormFile: s.str("form_file"), Files: paths, Hook: s.str("hook"), Spec: s}
+}
+
+// sampleValues fills every parameter so the skeleton's file list can be shown.
+func sampleValues(s Spec) map[string]any {
+	v := map[string]any{}
+	for _, p := range s.Params() {
+		if p.Type == "list" {
+			v[p.Key] = []string{"x"}
+		} else {
+			v[p.Key] = "x"
+		}
+	}
+	return v
+}
+
+var (
+	builtinOnce sync.Once
+	builtins    []Layout
+	builtinErr  error
+)
+
+// Builtins returns the built-in layouts, in name order.
+func Builtins() ([]Layout, error) {
+	builtinOnce.Do(func() {
+		entries, err := shared.ReadDir("shared/builtin")
 		if err != nil {
-			return nil, err
+			builtinErr = err
+			return
 		}
-		out = append(out, t)
-	}
-	return out, nil
-}
-
-// Get returns the template called name, or the one an alias names.
-func Get(name string) (Template, error) {
-	var t Template
-	name = Canonical(name)
-	data, err := defs.ReadFile(path.Join("defs", name, "template.json"))
-	if errors.Is(err, fs.ErrNotExist) || strings.ContainsAny(name, "/.") {
-		return t, fmt.Errorf("%w: no template %q", ErrInvalid, name)
-	}
-	if err != nil {
-		return t, err
-	}
-	return t, json.Unmarshal(data, &t)
-}
-
-// Render returns the files of a new dataset called name, from template tmpl and the form values.
-func Render(tmpl, name, description string, values map[string]any) ([]File, error) {
-	t, err := Get(tmpl)
-	if err != nil {
-		return nil, err
-	}
-	if !repos.ValidName(name, repos.DatasetPrefix) {
-		return nil, fmt.Errorf("%w: a dataset's name is %s followed by 3-48 lowercase letters, digits or hyphens; %q is not",
-			ErrInvalid, repos.DatasetPrefix, name)
-	}
-	data := map[string]any{"name": name, "description": strings.TrimSpace(description)}
-	for _, f := range t.Fields {
-		v, err := value(f, values[f.Key])
-		if err != nil {
-			return nil, err
-		}
-		data[f.Key] = v
-	}
-	funcs := template.FuncMap{"quote": strconv.Quote}
-	var out []File
-	for _, p := range t.Files {
-		if path.Base(p) == ".keep" { // marks a folder
-			out = append(out, File{Path: p})
-			continue
-		}
-		src, err := defs.ReadFile(path.Join("defs", t.Name, p))
-		if err != nil {
-			return nil, err
-		}
-		tt, err := template.New(p).Funcs(funcs).Option("missingkey=error").Parse(string(src))
-		if err != nil {
-			return nil, err
-		}
-		var b bytes.Buffer
-		if err := tt.Execute(&b, data); err != nil {
-			return nil, err
-		}
-		out = append(out, File{Path: p, Content: b.String()})
-	}
-	return out, nil
-}
-
-// value checks one form value: a list is trimmed, has no empty or repeated items, and is
-// required when the field says so.
-func value(f Field, raw any) (any, error) {
-	switch f.Type {
-	case "list":
-		var items []string
-		switch v := raw.(type) {
-		case nil:
-		case []any:
-			for _, x := range v {
-				s, ok := x.(string)
-				if !ok {
-					return nil, fmt.Errorf("%w: %s must be a list of text", ErrInvalid, f.Label)
-				}
-				items = append(items, s)
+		for _, e := range entries {
+			data, err := shared.ReadFile(path.Join("shared/builtin", e.Name(), "layout.yaml"))
+			if err != nil {
+				builtinErr = err
+				return
 			}
-		case []string:
-			items = v
+			s, err := ParseSpec(data, "built-in layout "+e.Name())
+			if err != nil {
+				builtinErr = err
+				return
+			}
+			builtins = append(builtins, newLayout(s, SourceBuiltin))
+		}
+	})
+	return builtins, builtinErr
+}
+
+var (
+	schemaOnce sync.Once
+	schemaVal  map[string]any
+)
+
+func layoutSchema() map[string]any {
+	schemaOnce.Do(func() {
+		data, err := fs.ReadFile(shared, "shared/layout.schema.json")
+		if err != nil {
+			panic(err)
+		}
+		v, err := LoadYAML(data)
+		if err != nil {
+			panic(err)
+		}
+		schemaVal = v.(map[string]any)
+	})
+	return schemaVal
+}
+
+// Problem is a project layout that could not be served, and why.
+type Problem struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
+// ProjectStore reads the project's own layouts; nil means none.
+type ProjectStore interface {
+	// Layouts returns the layout.yaml of each project layout by its folder name.
+	Layouts(ctx context.Context) (map[string][]byte, error)
+}
+
+// All returns the built-in layouts, then the project's (in name order), and the project layouts
+// that were left out with why. A project layout may not take a built-in's name.
+func All(ctx context.Context, store ProjectStore) ([]Layout, []Problem, error) {
+	all, err := Builtins()
+	if err != nil {
+		return nil, nil, err
+	}
+	all = slices.Clone(all)
+	if store == nil {
+		return all, nil, nil
+	}
+	raw, err := store.Layouts(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var problems []Problem
+	names := make([]string, 0, len(raw))
+	for n := range raw {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, folder := range names {
+		where := path.Join(LayoutsRepository, folder, "layout.yaml")
+		s, err := ParseSpec(raw[folder], where)
+		switch {
+		case err != nil:
+			problems = append(problems, Problem{where, err.Error()})
+		case s.Name() != folder:
+			problems = append(problems, Problem{where, fmt.Sprintf("its name %s is not its folder's name %s", s.Name(), folder)})
+		case slices.ContainsFunc(all, func(l Layout) bool { return l.Name == folder }) || legacy[folder] != "":
+			problems = append(problems, Problem{where, fmt.Sprintf("%s is a built-in layout's name", folder)})
 		default:
-			return nil, fmt.Errorf("%w: %s must be a list", ErrInvalid, f.Label)
+			all = append(all, newLayout(s, SourceProject))
 		}
-		var clean []string
-		for _, s := range items {
-			s = strings.TrimSpace(s)
-			switch {
-			case s == "":
-				continue
-			case strings.ContainsAny(s, "\n\r"):
-				return nil, fmt.Errorf("%w: %s: %q spans lines", ErrInvalid, f.Label, s)
-			case slices.Contains(clean, s):
-				return nil, fmt.Errorf("%w: %s: %q is listed twice", ErrInvalid, f.Label, s)
-			}
-			clean = append(clean, s)
-		}
-		if f.Required && len(clean) == 0 {
-			return nil, fmt.Errorf("%w: %s needs at least one item", ErrInvalid, f.Label)
-		}
-		return clean, nil
-	default:
-		s, _ := raw.(string)
-		s = strings.TrimSpace(s)
-		if f.Required && s == "" {
-			return nil, fmt.Errorf("%w: %s is required", ErrInvalid, f.Label)
-		}
-		return s, nil
 	}
+	return all, problems, nil
 }
 
-// Parse reads a dataset's form file back into form values, for editing. Only the Ultralytics template
-// has a form file today: its classes are data.yaml's names, as a list or as {id: name}.
-func Parse(tmpl, content string) (map[string]any, error) {
-	t, err := Get(tmpl)
+// Get returns the layout called name (an old id resolves to its layout's current name).
+func Get(ctx context.Context, store ProjectStore, name string) (Layout, error) {
+	name = Canonical(name)
+	if strings.ContainsAny(name, "/.") {
+		return Layout{}, invalid("no layout %q", name)
+	}
+	all, _, err := All(ctx, store)
 	if err != nil {
-		return nil, err
+		return Layout{}, err
 	}
-	if t.FormFile == "" {
-		return nil, fmt.Errorf("%w: template %q has no form file", ErrInvalid, tmpl)
-	}
-	var doc struct {
-		NC    *int      `yaml:"nc"`
-		Names yaml.Node `yaml:"names"`
-	}
-	if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrInvalid, t.FormFile, err)
-	}
-	var classes []string
-	switch doc.Names.Kind {
-	case yaml.SequenceNode:
-		if err := doc.Names.Decode(&classes); err != nil {
-			return nil, fmt.Errorf("%w: names: %w", ErrInvalid, err)
+	for _, l := range all {
+		if l.Name == name {
+			return l, nil
 		}
-	case yaml.MappingNode:
-		var byID map[int]string
-		if err := doc.Names.Decode(&byID); err != nil {
-			return nil, fmt.Errorf("%w: names: %w", ErrInvalid, err)
-		}
-		for i := 0; i < len(byID); i++ {
-			name, ok := byID[i]
-			if !ok {
-				return nil, fmt.Errorf("%w: names: ids must run 0..%d without gaps", ErrInvalid, len(byID)-1)
-			}
-			classes = append(classes, name)
-		}
-	default:
-		return nil, fmt.Errorf("%w: %s has no names", ErrInvalid, t.FormFile)
 	}
-	if doc.NC != nil && *doc.NC != len(classes) {
-		return nil, fmt.Errorf("%w: nc is %d but there are %d names", ErrInvalid, *doc.NC, len(classes))
+	return Layout{}, invalid("no layout %q", name)
+}
+
+// Render returns the files of a new dataset called name, from layout l and the form values.
+func Render(l Layout, name, description string, values map[string]any) ([]File, error) {
+	if !repos.ValidName(name, repos.DatasetPrefix) {
+		return nil, invalid("a dataset's name is %s followed by 3-48 lowercase letters, digits or hyphens; %q is not",
+			repos.DatasetPrefix, name)
 	}
-	return map[string]any{"classes": classes}, nil
+	return RenderSpec(l.Spec, name, description, values)
 }
