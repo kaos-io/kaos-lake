@@ -49,6 +49,6 @@ describe('New dataset', () => {
         expect(screen.getByText('Project')).toBeTruthy();
         expect(screen.getByText(/Class names/)).toBeTruthy(); // yolo's parameter: the default layout
         expect(screen.getByText(/title is required/)).toBeTruthy();
-        expect(screen.getByText('kaos-cli layout publish')).toBeTruthy();
+        expect(screen.getByText('kaosctl layout publish')).toBeTruthy();
     });
 });

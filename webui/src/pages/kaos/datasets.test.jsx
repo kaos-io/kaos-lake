@@ -38,7 +38,7 @@ describe('Datasets page tabs', () => {
 });
 
 describe('LayoutCheck', () => {
-    it('lists what the rules found and says the hook runs only in kaos-cli', async () => {
+    it('lists what the rules found and says the hook runs only in kaosctl', async () => {
         const { LayoutCheck } = await import('./datasets');
         render(
             <LayoutCheck

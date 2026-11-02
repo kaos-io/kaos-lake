@@ -17,7 +17,7 @@ import (
 
 // ServerChecks says what kaos-lake checks of a dataset, in every answer that involves rules.
 const ServerChecks = "kaos-lake checks a layout's declarative rules only and never runs its hook; " +
-	"kaos-cli layout validate runs both"
+	"kaosctl layout validate runs both"
 
 // Authorizer decides whether a caller may read a repository (the auth service).
 type Authorizer interface {
