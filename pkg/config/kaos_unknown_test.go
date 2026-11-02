@@ -27,3 +27,13 @@ func TestKaosUnknownKeyDoesNotRefuseStart(t *testing.T) {
 	_, err = config.NewConfig("", &config.ConfigImpl{})
 	require.Error(t, err)
 }
+
+// kaos.ui.mlflow_url is read into the KAOS block (PRD novelcore/kaos#1283: an app's Model links to MLflow).
+func TestKaosMLflowURL(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	viper.Set("kaos.ui.mlflow_url", "https://mlflow.kaos.eu")
+	baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	require.Equal(t, "https://mlflow.kaos.eu", baseCfg.KAOS.UI.MLflowURL)
+}

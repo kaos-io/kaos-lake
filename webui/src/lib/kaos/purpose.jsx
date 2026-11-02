@@ -57,8 +57,8 @@ export const PlaceBadges = ({ labels }) => (
     </>
 );
 
-/** Dataset (green, Default), Outputs (violet, with the app), Orphaned, Project repository (the
- * legacy one, grey) or Other (grey); then place. */
+/** Dataset (green, Default), Model (violet, with the app: its outputs repository), Orphaned,
+ * Project repository (the legacy one, grey) or Other (grey); then place. */
 export const PurposeBadge = ({ labels, repoId = '' }) => (
     <>
         <KindBadge labels={labels} repoId={repoId} />
@@ -86,8 +86,11 @@ const KindBadge = ({ labels, repoId }) => {
     if (kind === KIND.outputs) {
         return (
             <>
-                <Pill colour={PURPOSE_COLOURS.outputs} title="Checkpoints and results of one ML app">
-                    Outputs{labels['kaos.app'] ? ` · ${labels['kaos.app']}` : ''}
+                <Pill
+                    colour={PURPOSE_COLOURS.outputs}
+                    title={`The model of ${labels['kaos.app'] ? `app ${labels['kaos.app']}` : 'an ML app'}: its checkpoints, trained weights and exports, written by its pipeline runs`}
+                >
+                    Model{labels['kaos.app'] ? ` · ${labels['kaos.app']}` : ''}
                 </Pill>
                 {labels['kaos.orphaned'] === 'true' && (
                     <Pill colour="#b26a00" title="No app declares this repository any more; it is kept">
@@ -108,7 +111,7 @@ const KindBadge = ({ labels, repoId }) => {
         );
     }
     return (
-        <Pill colour={PURPOSE_COLOURS.other} title="Not a dataset or app outputs">
+        <Pill colour={PURPOSE_COLOURS.other} title="Not a dataset or an app's model">
             Other
         </Pill>
     );

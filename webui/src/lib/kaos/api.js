@@ -36,8 +36,16 @@ export const setRepoMetadata = (repoId, metadata) =>
         body: JSON.stringify({ metadata }),
     });
 
-/** KAOS settings of the UI: { console_url, legacy_repository } (each empty when unset). Read once per
- * page load: every repository's badge needs it. A failed read is retried on the next call. */
+/** The newest `amount` commits of `ref`, following only first parents: on an outputs repository's
+ * main that is one merge commit per step run, without the commits made on the run's own branch. */
+export const firstParentLog = (repoId, ref, amount) =>
+    request(
+        `${API_ENDPOINT}/repositories/${encodeURIComponent(repoId)}/refs/${encodeURIComponent(ref)}/commits?` +
+            new URLSearchParams({ amount: String(amount), first_parent: 'true' }),
+    );
+
+/** KAOS settings of the UI: { console_url, mlflow_url, legacy_repository } (each empty when unset).
+ * Read once per page load: every repository's badge needs it. A failed read is retried on the next call. */
 let uiConfig = null;
 export const getUIConfig = () => {
     if (!uiConfig) {

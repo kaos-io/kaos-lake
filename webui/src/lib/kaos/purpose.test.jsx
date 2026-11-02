@@ -14,10 +14,15 @@ describe('PurposeBadge', () => {
         expect(screen.getByText('Dataset').style.backgroundColor).toBe(PURPOSE_COLOURS.dataset);
         expect(screen.getByText('Default')).toBeTruthy();
     });
-    it('shows outputs in violet with their app, and an orphan warning', () => {
+    it("shows outputs as the app's model in violet, and an orphan warning", () => {
         render(<PurposeBadge labels={{ 'kaos.kind': 'outputs', 'kaos.app': 'yolo', 'kaos.orphaned': 'true' }} />);
-        expect(screen.getByText('Outputs · yolo').style.backgroundColor).toBe(PURPOSE_COLOURS.outputs);
+        const badge = screen.getByText('Model · yolo');
+        expect(badge.style.backgroundColor).toBe(PURPOSE_COLOURS.outputs);
+        expect(badge.title).toBe(
+            'The model of app yolo: its checkpoints, trained weights and exports, written by its pipeline runs',
+        );
         expect(screen.getByText('Orphaned')).toBeTruthy();
+        expect(screen.queryByText(/Outputs/)).toBeNull();
     });
     it('shows anything else as other', () => {
         render(<PurposeBadge labels={{}} />);
