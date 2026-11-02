@@ -176,9 +176,15 @@ func Serve(
 			Catalog: catalog, Groups: authService, Owner: cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
 		})
 	}
-	// Modified by KAOS: dataset templates for the UI and the CLI (pkg/kaos/templates, PRD
-	// novelcore/kaos#1283 F-04/F-05). They render files; the caller commits them as itself.
-	th := templates.Handler{StorageNamespacePrefix: cfg.GetBaseConfig().KAOS.Repositories.StorageNamespacePrefix}
+	// Modified by KAOS: dataset layouts for the UI and the CLI (pkg/kaos/templates, PRD
+	// novelcore/kaos#1283 F-04/F-05): the built-in ones and the project's own (main of its
+	// "layouts" repository), to signed-in callers. They render files, which the caller commits as
+	// itself, and check a dataset against a layout's declarative rules (never its hook).
+	th := templates.Handler{
+		StorageNamespacePrefix: cfg.GetBaseConfig().KAOS.Repositories.StorageNamespacePrefix,
+		Store:                  &templates.CatalogStore{Catalog: catalog, Blocks: catalog.BlockAdapter},
+		Auth:                   authService,
+	}
 	// The header's link back to the KAOS console (kaos.ui.console_url) and the Model panel's links
 	// to MLflow (kaos.ui.mlflow_url).
 	r.Method(http.MethodGet, "/kaos/v1/ui", uiconfig.Handler{
@@ -188,9 +194,10 @@ func Serve(
 		Meluxina:         meluxinaServed,
 		Project:          cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
 	})
-	r.Get("/kaos/v1/dataset-templates", th.List)
-	r.Post("/kaos/v1/dataset-templates/{name}/render", th.Render)
-	r.Post("/kaos/v1/dataset-templates/{name}/parse", th.Parse)
+	r.With(sharingMW).Get("/kaos/v1/dataset-templates", th.List)
+	r.With(sharingMW).Post("/kaos/v1/dataset-templates/{name}/render", th.Render)
+	r.With(sharingMW).Post("/kaos/v1/dataset-templates/{name}/parse", th.Parse)
+	r.With(sharingMW).Post("/kaos/v1/dataset-templates/{name}/validate", th.Validate)
 
 	// Configuration flag to control if the embedded UI is served
 	// or not and assign the correct handler for each case.

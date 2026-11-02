@@ -36,3 +36,33 @@ describe('Datasets page tabs', () => {
         expect(screen.getByText('meluxina view')).toBeTruthy();
     });
 });
+
+describe('LayoutCheck', () => {
+    it('lists what the rules found and says the hook runs only in kaos-cli', async () => {
+        const { LayoutCheck } = await import('./datasets');
+        render(
+            <LayoutCheck
+                result={{
+                    layout: 'yolo',
+                    hook: 'kaos_lib.layouts.yolo',
+                    problems: ['images/train/a.jpg has no labels/train/a.txt'],
+                    checked: { files: 3, read: 1, skipped: 0, partial: false },
+                }}
+            />,
+        );
+        expect(screen.getByText(/1 problem on main for layout yolo/)).toBeTruthy();
+        expect(screen.getByText('images/train/a.jpg has no labels/train/a.txt')).toBeTruthy();
+        expect(screen.getByText('kaos_lib.layouts.yolo')).toBeTruthy();
+        expect(screen.getByText(/declarative rules only/)).toBeTruthy();
+    });
+    it('says when main follows the rules and when the check was partial', async () => {
+        const { LayoutCheck } = await import('./datasets');
+        render(
+            <LayoutCheck
+                result={{ layout: 'samples', problems: [], checked: { files: 9, read: 1, skipped: 4, partial: true } }}
+            />,
+        );
+        expect(screen.getByText(/Main follows layout samples/)).toBeTruthy();
+        expect(screen.getByText(/4 files too large or too many/)).toBeTruthy();
+    });
+});

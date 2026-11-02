@@ -101,10 +101,12 @@ describe('formatting', () => {
 });
 
 describe('names and commands', () => {
-    it('keeps the old template name working', () => {
-        expect(canonicalTemplate('yolo')).toBe('ultralytics');
-        expect(canonicalTemplate('ultralytics')).toBe('ultralytics');
-        expect(templateTitle('yolo')).toBe('Ultralytics (YOLO object detection)');
+    it('reads a legacy layout id as the layout it names now', () => {
+        expect(canonicalTemplate('yolo')).toBe('yolo');
+        expect(canonicalTemplate('ultralytics')).toBe('yolo');
+        expect(canonicalTemplate('empty')).toBe('raw');
+        expect(templateTitle('ultralytics')).toBe('YOLO (txt annotations)');
+        expect(templateTitle('team-layout')).toBe('team-layout');
     });
     it('gives the exact strings people copy', () => {
         expect(pipelineRef('dataset-cars', 'v3')).toBe('dataset = dataset-cars@v3');

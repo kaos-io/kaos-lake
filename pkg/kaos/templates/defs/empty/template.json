@@ -1,7 +1,0 @@
-{
-  "name": "empty",
-  "title": "Empty",
-  "description": "Only a README; you choose the layout.",
-  "fields": [],
-  "files": ["README.md"]
-}

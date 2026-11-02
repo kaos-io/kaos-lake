@@ -1,7 +1,8 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283 F-03/F-06/F-10/F-12): new file, Apache-2.0.
 //
 // The Datasets page: the project's dataset-* repositories with their purpose, description,
-// template, versions and how to use them in a pipeline, a Release version action, and New dataset;
+// layout, versions and how to use them in a pipeline, a Release version action, a layout check, and
+// New dataset;
 // below them the datasets other projects share with this one; and the MeluXina tab with what is
 // staged on the HPC site.
 import React, { useCallback, useEffect, useState } from 'react';
@@ -13,7 +14,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 
 import { AlertError, ClipboardButton, Loading } from '../../lib/components/controls';
 import { Link } from '../../lib/components/nav';
-import { DATASET_PREFIX, listByPrefix, listVersions, releaseVersion } from '../../lib/kaos/api';
+import { DATASET_PREFIX, listByPrefix, listVersions, releaseVersion, validateLayout } from '../../lib/kaos/api';
 import {
     CLI_README_URL,
     browseHref,
@@ -26,7 +27,7 @@ import {
 import { PipelineUsage } from '../../lib/kaos/pipelineUsage';
 import { useConsoleHref, useUIConfig } from '../../lib/kaos/consoleLink';
 import { PurposeBadge, useRepoLabels } from '../../lib/kaos/purpose';
-import { templateTitle } from '../../lib/kaos/templates';
+import { canonicalTemplate, templateTitle } from '../../lib/kaos/templates';
 import MeluxinaTab from './meluxina';
 import SharedWithUs from './sharedWithUs';
 
@@ -76,6 +77,51 @@ const NextSteps = ({ repoId, hasVersion }) => (
     </div>
 );
 
+const MAX_PROBLEMS_SHOWN = 20;
+
+/** What a layout check of main found: kaos-lake's answer for the layout's declarative rules. */
+export const LayoutCheck = ({ result }) => {
+    const { problems, checked, hook, layout } = result;
+    return (
+        <div className={`small mt-2 p-2 border rounded ${problems.length ? 'border-warning' : 'border-success'}`}>
+            {problems.length ? (
+                <>
+                    <strong>
+                        {problems.length} problem{problems.length === 1 ? '' : 's'} on main for layout {layout}:
+                    </strong>
+                    <ul className="mb-1">
+                        {problems.slice(0, MAX_PROBLEMS_SHOWN).map((p) => (
+                            <li key={p}>
+                                <code>{p}</code>
+                            </li>
+                        ))}
+                    </ul>
+                    {problems.length > MAX_PROBLEMS_SHOWN && (
+                        <div>… and {problems.length - MAX_PROBLEMS_SHOWN} more</div>
+                    )}
+                </>
+            ) : (
+                <strong>Main follows layout {layout}&apos;s rules.</strong>
+            )}
+            <div className="text-muted">
+                {checked.files} files looked at
+                {checked.partial
+                    ? `; ${checked.skipped} files too large or too many to read were not checked line by line`
+                    : ''}
+                . kaos-lake checks the layout&apos;s declarative rules only
+                {hook ? (
+                    <>
+                        ; its hook <code>{hook}</code> runs in <code>kaos-cli layout validate</code>
+                    </>
+                ) : (
+                    ''
+                )}
+                .
+            </div>
+        </div>
+    );
+};
+
 export const DatasetCard = ({ repo, detail = false, created = false }) => {
     const labels = useRepoLabels(repo.id);
     const [usage, setUsage] = useState(detail);
@@ -83,6 +129,18 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [released, setReleased] = useState('');
+    const [check, setCheck] = useState(null);
+    const layout = canonicalTemplate(labels['kaos.template']);
+    const runCheck = async () => {
+        setCheck('running');
+        setError(null);
+        try {
+            setCheck(await validateLayout(layout, repo.id, 'main'));
+        } catch (e) {
+            setCheck(null);
+            setError(e);
+        }
+    };
     const load = useCallback(() => {
         listVersions(repo.id)
             .then(setVersions)
@@ -118,7 +176,7 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                         </h5>
                         {labels['kaos.description'] && <div className="text-muted">{labels['kaos.description']}</div>}
                         <div className="small text-muted mt-1">
-                            {labels['kaos.template'] ? `Template: ${templateTitle(labels['kaos.template'])} · ` : ''}
+                            {labels['kaos.template'] ? `Layout: ${templateTitle(labels['kaos.template'])} · ` : ''}
                             {versions === null
                                 ? 'Reading versions…'
                                 : latest
@@ -134,6 +192,17 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                         <SharingNote labels={labels} />
                     </div>
                     <div className="d-flex gap-2">
+                        {layout && layout !== 'raw' && (
+                            <Button
+                                size="sm"
+                                variant="outline-secondary"
+                                disabled={check === 'running'}
+                                onClick={runCheck}
+                                title="Check main against the layout's rules"
+                            >
+                                {check === 'running' ? 'Checking…' : 'Check layout'}
+                            </Button>
+                        )}
                         <Button size="sm" variant="outline-secondary" onClick={() => setUsage(!usage)}>
                             How to use in a pipeline
                         </Button>
@@ -158,6 +227,7 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                         .
                     </div>
                 )}
+                {check && check !== 'running' && <LayoutCheck result={check} />}
                 {usage && <PipelineUsage repoId={repo.id} versions={versions} />}
                 {error && <AlertError className="mt-2" error={error} onDismiss={() => setError(null)} />}
             </Card.Body>
@@ -183,8 +253,8 @@ const DatasetList = () => {
                 <Card body className="text-center">
                     <p className="mb-2">There are no datasets in this project yet.</p>
                     <p className="text-muted mb-3">
-                        Create one from a template, add your data (in the browser or with the CLI), then release a
-                        version for pipelines to use.
+                        Create one from a layout, add your data (in the browser or with the CLI), then release a version
+                        for pipelines to use.
                     </p>
                     <div>
                         <Link className="btn btn-success" href={{ pathname: '/datasets/new' }}>

@@ -58,9 +58,10 @@ describe('editFile', () => {
         expect(editable('images/a.jpg', 10, 'image/jpeg')).toBe(false);
         expect(editable('big.csv', MAX_EDIT_BYTES + 1, undefined)).toBe(false);
     });
-    it("opens the class form only for an Ultralytics dataset's root data.yaml", () => {
-        expect(formFor({ 'kaos.template': 'ultralytics' }, 'data.yaml')).toBe('ultralytics');
-        expect(formFor({ 'kaos.template': 'ultralytics' }, 'sub/data.yaml')).toBe('');
+    it("opens the class form only for a yolo dataset's root data.yaml (a legacy label too)", () => {
+        expect(formFor({ 'kaos.template': 'yolo' }, 'data.yaml')).toBe('yolo');
+        expect(formFor({ 'kaos.template': 'ultralytics' }, 'data.yaml')).toBe('yolo');
+        expect(formFor({ 'kaos.template': 'yolo' }, 'sub/data.yaml')).toBe('');
         expect(formFor({ 'kaos.template': 'empty' }, 'data.yaml')).toBe('');
     });
 });

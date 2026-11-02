@@ -1,8 +1,10 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283 F-04): new file, Apache-2.0.
 //
-// New dataset: a name (dataset-…), a description, a template and its form. The dataset is created
-// and its first commit made with the signed-in person's own identity.
+// New dataset: a name (dataset-…), a description, a layout (built-in or the project's own) and its
+// parameters. The dataset is created and its first commit made with the signed-in person's own
+// identity.
 import React, { useEffect, useState } from 'react';
+import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
 import Card from 'react-bootstrap/Card';
 import Container from 'react-bootstrap/Container';
@@ -35,7 +37,7 @@ const NewDatasetPage = () => {
     const [error, setError] = useState(null);
     const [rest, setRest] = useState('');
     const [description, setDescription] = useState('');
-    const [template, setTemplate] = useState('ultralytics');
+    const [template, setTemplate] = useState('yolo');
     const [values, setValues] = useState({});
     const [step, setStep] = useState('');
 
@@ -69,8 +71,8 @@ const NewDatasetPage = () => {
             </div>
             <h3>New dataset</h3>
             <p className="text-muted">
-                Pick a template and a name. The dataset is created as you, with the template&apos;s folders; then you
-                add your data and release a version.
+                Pick a layout and a name. The dataset is created as you, with the layout&apos;s folders and files; then
+                you add your data and release a version.
             </p>
             {!catalog.storage_namespace_prefix && (
                 <AlertError error="This lakeFS has no storage for new datasets (kaos.repositories.storage_namespace_prefix)." />
@@ -95,7 +97,7 @@ const NewDatasetPage = () => {
                     <Form.Label>Description</Form.Label>
                     <Form.Control value={description} onChange={(e) => setDescription(e.target.value)} />
                 </Form.Group>
-                <Form.Label>Template</Form.Label>
+                <Form.Label>Layout</Form.Label>
                 <div className="d-flex gap-3 mb-3 flex-wrap">
                     {catalog.templates.map((t) => (
                         <Card
@@ -106,13 +108,34 @@ const NewDatasetPage = () => {
                             style={{ width: '18rem', cursor: 'pointer' }}
                         >
                             <Card.Body>
-                                <Card.Title>{t.title}</Card.Title>
+                                <Card.Title>
+                                    {t.title}{' '}
+                                    <Badge
+                                        bg={t.source === 'project' ? 'info' : 'secondary'}
+                                        className="fs-6 fw-normal"
+                                    >
+                                        {t.source === 'project' ? 'Project' : 'Built-in'}
+                                    </Badge>
+                                </Card.Title>
                                 <Card.Text className="small text-muted">{t.description}</Card.Text>
+                                <Card.Text className="small text-muted">
+                                    <code>{t.name}</code>
+                                    {t.version ? ` · version ${t.version}` : ''}
+                                </Card.Text>
                             </Card.Body>
                         </Card>
                     ))}
                 </div>
-                {chosen.fields.map((f) => (
+                <p className="small text-muted">
+                    Your project can add its own layouts: a <code>layout.yaml</code> in the{' '}
+                    <code>{catalog.layouts_repository || 'layouts'}</code> repository (<code>kaos-cli layout init</code>
+                    , then <code>kaos-cli layout publish</code>). kaos-lake checks a layout&apos;s declarative rules
+                    only; a layout&apos;s Python hook runs only in kaos-cli.
+                </p>
+                {(catalog.problems || []).map((p) => (
+                    <AlertError key={p.path} error={`Layout not offered: ${p.error}`} />
+                ))}
+                {(chosen.parameters || []).map((f) => (
                     <Form.Group className="mb-3" key={f.key}>
                         <Form.Label>
                             {f.label}

@@ -1,0 +1,146 @@
+# The declarative rules over a dataset tree ({path: text, or {hex: <bytes>}}): exactly these problems, in this order. Hooks never
+# run here; kaos-lake runs no hook at all.
+- case: a valid yolo dataset
+  builtin: yolo
+  tree:
+    data.yaml: "path: .\ntrain: images/train\nval: images/val\nnames: [car, truck]\n"
+    images/train/a.jpg: x
+    images/train/.keep: ""
+    images/val/b.PNG: x
+    images/val/notes.md: not an image, no label needed
+    labels/train/a.txt: "0 0.5 0.5 0.2 0.2\n\n1 .1 1. 2e-1 0.3  \r\n"
+    labels/val/b.txt: "1 0.5 0.5 0.2 0.2"
+    labels/train.cache: a cache file training tools write
+    .kubecore-dataset.json: "{}"
+  errors: []
+- case: yolo, everything wrong
+  builtin: yolo
+  tree:
+    data.yaml: "train: train\nnames: []\nnc: zero\nkpt_shape: [17]\nextra: kept\n"
+    images/train/a.jpg: x
+    images/train/sub/c.webp: x
+    labels/train/sub/c.txt: "zero 0.5\n0 0.5 0.5 0.2 0.2 # comment\n   \n0 nan 1 1 1\n"
+    labels/val/z.txt: "0 1 1 1 1 extra-long-line-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding"
+  errors:
+    - "images/train/a.jpg has no labels/train/a.txt"
+    - "labels/train/sub/c.txt:1: expected '<class-id> <x> <y> <w> <h> ...': an integer class id, then numbers: zero 0.5"
+    - "labels/train/sub/c.txt:2: expected '<class-id> <x> <y> <w> <h> ...': an integer class id, then numbers: 0 0.5 0.5 0.2 0.2 # comment"
+    - "labels/train/sub/c.txt:4: expected '<class-id> <x> <y> <w> <h> ...': an integer class id, then numbers: 0 nan 1 1 1"
+    - "labels/val/z.txt:1: expected '<class-id> <x> <y> <w> <h> ...': an integer class id, then numbers: 0 1 1 1 1 extra-long-line-padding-padding-padding-padding-padding-padding-paddin"
+    - "data.yaml: (root): val is required"
+    - "data.yaml: kpt_shape: needs at least 2 items"
+    - "data.yaml: names: needs at least 1 items"
+    - "data.yaml: nc: must be integer"
+    - "data.yaml: train: does not match ^/?images/[^/]"
+- case: yolo without data.yaml or images
+  builtin: yolo
+  tree:
+    README.md: hello
+    images/train/.keep: ""
+  errors:
+    - "data.yaml: no file matches (required)"
+    - "images/**: no file matches (required)"
+- case: yolo data.yaml that is not YAML, and names of the wrong type
+  builtin: yolo
+  tree:
+    data.yaml: "train: [images/train\n"
+    images/train/a.jpg: x
+    labels/train/a.txt: "0 0.5 0.5 0.2 0.2\n"
+  errors:
+    - "data.yaml: not valid YAML"
+- case: yolo names mapping, test null, wrong scalar types
+  builtin: yolo
+  tree:
+    data.yaml: "train: /images/train\nval: images/val\ntest: ~\nnames: {0: car, 1: [x]}\nnc: 0\npath: 3\n"
+    images/train/a.jpg: x
+    labels/train/a.txt: "0 0.5 0.5 0.2 0.2\n"
+  errors:
+    - "data.yaml: names.1: must be string or integer or number"
+    - "data.yaml: nc: must be at least 1"
+    - "data.yaml: path: must be string"
+- case: every rule
+  layout:
+    layout: 1
+    name: every
+    title: Every rule
+    rules:
+      required: [meta.yaml, "data/*.json", "docs/**"]
+      allowed: [meta.yaml, "data/**", "labels/**", "notes/*.txt"]
+      extensions: [{files: "data/**", allowed: [.json, .Bin]}]
+      pairs: [{files: "data/**", extensions: [.JSON], needs: "labels/{stem}.txt"}]
+      lines:
+        - {files: "labels/**/*.txt", pattern: '[a-z]+( [a-z]+)*', message: lower-case words}
+        - {files: "notes/*.txt", pattern: '\d+'}
+      manifests:
+        - file: meta.yaml
+          schema:
+            type: object
+            required: [owner, tags]
+            additionalProperties: false
+            properties:
+              owner: {type: string, minLength: 2, maxLength: 5}
+              tags: {type: array, maxItems: 2, items: {type: string, enum: [a, b]}}
+              size: {type: number, maximum: 10}
+              mode: {enum: [1, "two", true, null]}
+              shape: {type: object, minProperties: 1, maxProperties: 1}
+        - {file: absent.yaml, schema: {type: object}}
+  tree:
+    meta.yaml: "owner: x\ntags: [a, c, b]\nsize: 10.5\nmode: 2\nshape: {}\nextra: 1\n"
+    data/one.json: "{}"
+    data/sub/two.JSON: "{}"
+    data/three.bin: ""
+    data/four.txt: ""
+    data/noext: ""
+    labels/one.txt: "ok words\nBad Words\n"
+    labels/sub/two.txt: {hex: ff}
+    notes/n.txt: "12\n1a\n"
+    stray.csv: ""
+    .hidden/x.csv: ""
+  errors:
+    - "docs/**: no file matches (required)"
+    - "stray.csv: not part of this layout"
+    - "data/four.txt: extension .txt is not allowed here (.json, .bin)"
+    - "data/noext: extension (none) is not allowed here (.json, .bin)"
+    - "labels/one.txt:2: lower-case words: Bad Words"
+    - "labels/sub/two.txt: not UTF-8 text"
+    - "notes/n.txt:2: does not match \\d+: 1a"
+    - "meta.yaml: extra: is not allowed"
+    - "meta.yaml: mode: must be one of 1, two, true, null"
+    - "meta.yaml: owner: needs at least 2 characters"
+    - "meta.yaml: shape: needs at least 1 keys"
+    - "meta.yaml: size: must be at most 10"
+    - "meta.yaml: tags: allows at most 2 items"
+    - "meta.yaml: tags[1]: must be one of a, b"
+- case: pairs below nested fixed folders and a missing partner
+  layout:
+    layout: 1
+    name: pairs
+    title: Pairs
+    rules:
+      pairs:
+        - {files: "a/b/**/*.png", needs: "c/{stem}.json"}
+        - {files: "top.dat", needs: "top-{stem}.idx"}
+  tree:
+    a/b/x/y.png: ""
+    a/b/z.png: ""
+    a/b/q.jpg: ""
+    c/x/y.json: ""
+    top.dat: ""
+  errors:
+    - "a/b/z.png has no c/z.json"
+    - "top.dat has no top-top.idx"
+- case: a manifest that is an empty document
+  layout:
+    layout: 1
+    name: empty-doc
+    title: Empty
+    rules: {manifests: [{file: m.yaml, schema: {type: object}}]}
+  tree:
+    m.yaml: ""
+  errors:
+    - "m.yaml: (root): must be object"
+- case: raw checks nothing
+  builtin: raw
+  tree:
+    anything.bin: x
+  errors: []

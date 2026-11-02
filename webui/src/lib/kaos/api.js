@@ -1,7 +1,8 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283): new file, Apache-2.0.
 //
 // The KAOS dataset calls of the web UI. Every write goes through the regular lakeFS API with the
-// signed-in person's session (P-3); /kaos/v1/dataset-templates only renders files.
+// signed-in person's session (P-3); /kaos/v1/dataset-templates (the dataset layouts) only renders
+// files and checks a dataset against a layout's declarative rules.
 import {
     API_ENDPOINT,
     branches,
@@ -85,6 +86,13 @@ export const renderTemplate = (template, name, description, values) =>
         body: JSON.stringify({ name, description, values }),
     });
 
+/** The problems a layout's declarative rules find in repoId@ref (kaos-lake never runs a layout's hook). */
+export const validateLayout = (template, repoId, ref) =>
+    request(`/kaos/v1/dataset-templates/${encodeURIComponent(template)}/validate`, {
+        method: 'POST',
+        body: JSON.stringify({ repository: repoId, ref }),
+    });
+
 export const parseTemplate = (template, content) =>
     request(`/kaos/v1/dataset-templates/${encodeURIComponent(template)}/parse`, {
         method: 'POST',
@@ -107,15 +115,15 @@ export const listByPrefix = async (prefix) => {
 };
 
 /**
- * Creates dataset `name` from `template` as the signed-in person: the repository, one commit of the
+ * Creates dataset `name` from the layout `template` as the signed-in person: the repository, one commit of the
  * rendered files on main, then its labels. onStep reports progress.
  */
 export const createDataset = async (
     { name, description, template: asked, values, storagePrefix },
     onStep = () => {},
 ) => {
-    const template = canonicalTemplate(asked); // the old name "yolo" is written as "ultralytics"
-    onStep('Rendering the template');
+    const template = canonicalTemplate(asked); // new datasets carry the layout's current name
+    onStep('Rendering the layout');
     const { files } = await renderTemplate(template, name, description, values);
     onStep('Creating the repository');
     await repositories.create({
@@ -128,7 +136,7 @@ export const createDataset = async (
         await uploadText(name, 'main', f.path, f.content);
     }
     onStep('Committing');
-    await commits.commit(name, 'main', `Create ${name} from the ${template} template`, { 'kaos.template': template });
+    await commits.commit(name, 'main', `Create ${name} from the ${template} layout`, { 'kaos.template': template });
     onStep('Labelling');
     const metadata = { 'kaos.kind': KIND.dataset, 'kaos.template': template };
     if (description.trim()) metadata['kaos.description'] = description.trim();

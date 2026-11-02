@@ -1,6 +1,6 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283 F-05): new file, Apache-2.0.
 //
-// Edit a text file of a repository in the UI. An Ultralytics (YOLO) dataset's data.yaml opens as a class-list
+// Edit a text file of a repository in the UI. A yolo dataset's data.yaml opens as a class-list
 // form (kaos-lake parses and re-renders it, so nc always matches); other text files open in a text
 // editor. Saving never writes main directly: it opens a pull request from a draft branch (OQ-2).
 import React, { useState } from 'react';
@@ -26,10 +26,9 @@ export const editable = (path, sizeBytes, contentType) => {
     return text && sizeBytes >= 0 && sizeBytes <= MAX_EDIT_BYTES;
 };
 
-/** The form file of the repository's template, when path is it (Ultralytics: data.yaml at the root).
- * Datasets labelled with the old template name "yolo" are treated the same. */
+/** The layout whose class form edits path, when path is its form file (yolo: data.yaml at the root). */
 export const formFor = (labels, path) =>
-    canonicalTemplate(labels['kaos.template']) === 'ultralytics' && path === 'data.yaml' ? 'ultralytics' : '';
+    canonicalTemplate(labels['kaos.template']) === 'yolo' && path === 'data.yaml' ? 'yolo' : '';
 
 export const EditFileButton = ({ repoId, refId, path, sizeBytes, contentType }) => {
     const labels = useRepoLabels(repoId);

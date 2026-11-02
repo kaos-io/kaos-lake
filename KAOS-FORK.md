@@ -70,9 +70,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
 - **Datasets in the web UI** (PRD novelcore/kaos#1283 F-03/F-04/F-06, `webui/src/lib/kaos`,
   `webui/src/pages/kaos`). Repository cards carry a coloured purpose badge (Dataset, Default,
   Outputs · app, Orphaned, Other). The Datasets page lists `dataset-*` repositories with their
-  description, template and latest version, with Release version (tags `v1`, `v2`, …). New dataset
-  creates one from a template through the regular API as the signed-in person. Text files up to
-  1 MiB have Edit; a YOLO dataset's `data.yaml` opens as a class-list form. Saving opens a pull
+  description, layout and latest version, with Release version (tags `v1`, `v2`, …) and Check layout.
+  New dataset creates one from a layout through the regular API as the signed-in person. Text files up to
+  1 MiB have Edit; a yolo dataset's `data.yaml` opens as a class-list form. Saving opens a pull
   request into main from a draft branch, never a direct write (F-05).
 - **Repositories with a purpose** (PRD novelcore/kaos#1283 F-01/F-02). `kaos.*` repository
   metadata marks a dataset (`dataset-*`) or an ML app's outputs (`outputs-<app>`). With
@@ -89,11 +89,26 @@ To release, open a pull request that bumps `kaos/VERSION`.
   shared any more. With `kaos.token_identity.project` and `consumer_claim_prefixes` set, a token
   whose role claims name another project of the organisation joins that project's group while it
   exists (F-12). The web UI shows location and sharing badges and a Share form on each dataset.
-- **Dataset templates** (PRD novelcore/kaos#1283 F-04/F-05). `pkg/kaos/templates` embeds the
-  templates (YOLO, Empty) and serves `GET /kaos/v1/dataset-templates`,
-  `POST /kaos/v1/dataset-templates/{name}/render` (form values → a new dataset's files) and
-  `.../parse` (a dataset's `data.yaml` → form values, for editing). They write nothing: the UI and
-  the CLI commit the files with the caller's own identity.
+- **Dataset layouts** (PRD novelcore/kaos#1283 F-04/F-05). A layout is a declarative spec
+  (`layout.yaml`, schema `pkg/kaos/templates/shared/layout.schema.json`): name, title, description,
+  version, parameters, a starter skeleton with `{{placeholders}}`, validation rules (required and
+  allowed path patterns, extensions, pairs such as `images/<x>.jpg` ↔ `labels/<x>.txt`, line
+  patterns, a schema for a YAML manifest), what a pull downloads, and an optional Python hook. The
+  schema, the built-in layouts (`yolo`, `raw`) and the test fixtures are the same bytes as in kaos-lib
+  (`src/kaos_lib/layouts/shared`, `tests/layout_fixtures`, pinned by `SHA256SUMS`), and both
+  implementations pass the same fixtures. `pkg/kaos/templates` serves the built-in layouts and the
+  project's own: `<name>/layout.yaml` on main of the project's lakeFS repository `layouts`, which
+  people who may create datasets write (`kaos-cli layout publish` opens a pull request), so a project
+  adds a layout without a platform release; a project layout that is not valid, or takes a built-in's
+  name, is left out and reported. `GET /kaos/v1/dataset-templates` lists them with `source`
+  (`builtin`/`project`) and the whole spec, `POST /kaos/v1/dataset-templates/{name}/render` (form
+  values → a new dataset's files), `.../parse` (a dataset's form file → form values, for editing) and
+  `.../validate` (`{repository, ref}` → the problems of the layout's declarative rules, for a caller
+  who may list and read the repository; up to 200 000 files, content of at most 5 000 files and
+  64 MiB). kaos-lake never runs a layout's hook: only kaos-lib does. These endpoints need a signed-in
+  caller and write nothing: the UI and the CLI commit the files with the caller's own identity. New
+  datasets are labelled `kaos.template=<layout>`; ids datasets carried before a layout's rename read
+  as the layout's current name and are never written.
 - **Dataset catalog** (PRD novelcore/kaos#1283 F-07, D-05). With workload identity on and
   `kaos.catalog.namespaces` set, `GET /kaos/v1/catalog` answers the datasets (name, default,
   description, location, main's head, `vN` versions newest first) to pods of those namespaces by
@@ -165,9 +180,6 @@ To release, open a pull request that bumps `kaos/VERSION`.
   policy, detaches anything else from the user, and deletes `KAOSApp-*` policies of apps that are
   no longer declared. Users without the `kaos-app-` prefix are never touched. Code:
   `pkg/auth/declared/policy.go`.
-- **Template `ultralytics`** (PRD novelcore/kaos#1283 F-04). The `yolo` dataset template is now
-  `ultralytics` (the format is Ultralytics'); `yolo` stays an alias in render, parse and the
-  template endpoints. New datasets are labelled `kaos.template=ultralytics`; the UI treats both.
 - **MeluXina staging view** (PRD novelcore/kaos#1283 F-10, D-08). With workload identity on and
   `kaos.meluxina.namespaces` set, pods of those namespaces `POST /kaos/v1/meluxina/snapshot` the
   stager's report by service-account token: `taken_at`, `space` (`used_bytes`, `limit_bytes`,

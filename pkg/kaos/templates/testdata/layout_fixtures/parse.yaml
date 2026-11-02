@@ -1,0 +1,54 @@
+# A dataset's form file read back into parameter values (for editing), or refused (error: a part of the message).
+- case: yolo names as an id mapping
+  builtin: yolo
+  content: "path: .\ntrain: images/train\nnc: 2\nnames:\n  0: car\n  1: \"truck\"\n"
+  values: {classes: [car, truck]}
+- case: yolo names as a list, values as written
+  builtin: yolo
+  content: "names: [car, 1.0, true, ~, 'x y']\n"
+  values: {classes: [car, "1.0", "true", "", x y]}
+- case: ids in any order
+  builtin: yolo
+  content: "names:\n  1: b\n  0: a\n"
+  values: {classes: [a, b]}
+- case: no names key leaves the value out
+  builtin: yolo
+  content: "train: images/train\n"
+  values: {}
+- case: ids without gaps
+  builtin: yolo
+  content: "names:\n  0: a\n  2: c\n"
+  error: "ids must run 0..1 without gaps"
+- case: ids are numbers
+  builtin: yolo
+  content: "names:\n  a: x\n"
+  error: "ids must be 0, 1, 2"
+- case: an id once
+  builtin: yolo
+  content: "names:\n  0: a\n  0: b\n"
+  error: "id 0 is listed twice"
+- case: not a mapping
+  builtin: yolo
+  content: "- a\n- b\n"
+  error: "data.yaml: must be a mapping"
+- case: not YAML
+  builtin: yolo
+  content: "names: [a\n"
+  error: "data.yaml: not valid YAML"
+- case: nested values are refused
+  builtin: yolo
+  content: "names: [[a]]\n"
+  error: "names must list single values"
+- case: raw has no form file
+  builtin: raw
+  content: "x: 1\n"
+  error: "layout raw has no form file"
+- case: a text parameter
+  layout:
+    layout: 1
+    name: mini
+    title: Mini
+    form_file: meta.yaml
+    parameters: [{key: owner, label: Owner, type: text, form_key: who}, {key: tags, label: Tags, type: list}]
+  content: "who: 42\ntags: [a]\n"
+  values: {owner: "42"}
