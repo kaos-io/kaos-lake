@@ -25,6 +25,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/kaos/cors"
 	"github.com/treeverse/lakefs/pkg/kaos/datacatalog"
 	"github.com/treeverse/lakefs/pkg/kaos/meluxina"
+	"github.com/treeverse/lakefs/pkg/kaos/sharing"
 	"github.com/treeverse/lakefs/pkg/kaos/templates"
 	"github.com/treeverse/lakefs/pkg/kaos/uiconfig"
 	"github.com/treeverse/lakefs/pkg/logging"
@@ -129,7 +130,13 @@ func Serve(
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
 		if ns := cfg.GetBaseConfig().KAOS.Catalog.Namespaces; len(ns) > 0 {
-			r.Method(http.MethodGet, "/kaos/v1/catalog", datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns})
+			h := datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns}
+			// Modified by KAOS: with kaos.sharing, the datasets sibling projects share with this
+			// one follow its own (pkg/kaos/sharing, PRD novelcore/kaos#1283 F-12).
+			if sh := sharing.Active(); sh != nil {
+				h.Shared = sh.Aggregator.Shared
+			}
+			r.Method(http.MethodGet, "/kaos/v1/catalog", h)
 		}
 		// What is staged on MeluXina: the stager's pods post a snapshot, signed-in people read it
 		// (pkg/kaos/meluxina, PRD novelcore/kaos#1283 F-10).
@@ -143,6 +150,24 @@ func Serve(
 			r.Post("/kaos/v1/meluxina/snapshot", h.Post)
 			r.With(authMW).Get("/kaos/v1/meluxina", h.Get)
 		}
+	}
+	// Modified by KAOS: cross-project dataset sharing (pkg/kaos/sharing, PRD novelcore/kaos#1283
+	// F-12). /kaos/v1/peers answers the peers file (empty without kaos.sharing) to any signed-in
+	// caller; /kaos/v1/shared answers the datasets shared with the caller's consumer groups,
+	// which exist only with token identity.
+	sharingMW, err := GenericAuthMiddleware(logger, authenticator, authService, &oidcConfig, &cookieAuthConfig)
+	if err != nil {
+		panic(err)
+	}
+	var peersFile *sharing.PeersFile
+	if sh := sharing.Active(); sh != nil {
+		peersFile = sh.Peers
+	}
+	r.With(sharingMW).Method(http.MethodGet, "/kaos/v1/peers", sharing.PeersHandler{File: peersFile})
+	if tokenid.Active() != nil {
+		r.With(sharingMW).Method(http.MethodGet, sharing.SharedPath, sharing.SharedHandler{
+			Catalog: catalog, Groups: authService, Owner: cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
+		})
 	}
 	// Modified by KAOS: dataset templates for the UI and the CLI (pkg/kaos/templates, PRD
 	// novelcore/kaos#1283 F-04/F-05). They render files; the caller commits them as itself.

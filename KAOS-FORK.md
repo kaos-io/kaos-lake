@@ -227,3 +227,24 @@ To release, open a pull request that bumps `kaos/VERSION`.
   the New dataset flow, the first upload straight to main goes through, and only then does the
   repository show on the Datasets page and in the pipeline dropdown and get main's protection.
   People's own labels stay; it never sets `kaos.template`. Code: `pkg/kaos/repos/repos.go`.
+- **Datasets shared across projects, for pipelines** (PRD novelcore/kaos#1283 F-12, release
+  `1.86.0-kaos.18`). Owner side: `GET /kaos/v1/shared` (with token identity on, behind the API's
+  authentication) answers `{"owner": <kaos.token_identity.project>, "datasets": [...]}`: the
+  `dataset-*` repositories labelled `kaos.kind=dataset` whose `kaos.shared_with` names a project of
+  one of the caller's `kaos-consumer-<project>` groups, never the default flag nor who else they
+  are shared with. Only consumer groups count: a caller without one (this project's own people,
+  its pipelines, anyone else) gets 401. A metadata write or delete touching `kaos.shared_with`
+  runs the shares reconcile at once (`repos.Kick`). Consumer side: the top-level block
+  `kaos.sharing` (`peers_path`, `machine_key_path`, `interval` default 1m, `cache_ttl` default
+  60s; unknown sub-keys ignored; no block: off, nothing changes) names the peers file
+  `{"project":"B","peers":[{"project":"A","endpoint":"…","url":"…"}]}`, re-read every interval
+  (missing: no peers; not JSON: the last good copy stays; invalid entries and the own project
+  left out). `GET /kaos/v1/catalog` then lists, after the project's own datasets, each peer's
+  `/kaos/v1/shared` named `<owner>/<dataset>` with `owner` set and never `default`: peers asked in
+  parallel, 5 s each, answers reused for `cache_ttl`, a failing peer's last good answer served for
+  up to 10 minutes, 401 read as nothing shared, 404 or an HTML page as an older peer. The token
+  sent to peers is minted from this project's Zitadel machine key (JWT profile, RS256, at
+  `{kaos.token_identity.issuer}/oauth/v2/token`, audienced to `kaos.token_identity.audiences[0]`),
+  reused until half its lifetime, the key re-read on each mint; access keys never leave.
+  `GET /kaos/v1/peers` answers the peers file (empty without `kaos.sharing`) to any signed-in
+  caller. Code: `pkg/kaos/sharing`, `pkg/kaos/repos/kick.go`.

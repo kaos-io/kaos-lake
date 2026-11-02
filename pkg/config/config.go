@@ -619,6 +619,9 @@ type BaseConfig struct {
 		Meluxina struct {
 			Namespaces []string `mapstructure:"namespaces"`
 		} `mapstructure:"meluxina"`
+		// Sharing reads the datasets sibling projects share with this one (pkg/kaos/sharing,
+		// PRD novelcore/kaos#1283 F-12). Empty PeersPath: off. Needs TokenIdentity.
+		Sharing KAOSSharing `mapstructure:"sharing"`
 		// Unknown collects kaos.* keys this build does not know. Config is decoded exactly (an
 		// unknown key is an error), but a newer chart or operator may set a kaos.* key an older
 		// image lacks; that must never stop the server from starting.
@@ -655,6 +658,23 @@ type KAOSTokenIdentity struct {
 	// datasets shared with that project (PRD novelcore/kaos#1283 F-12).
 	Project               string   `mapstructure:"project"`
 	ConsumerClaimPrefixes []string `mapstructure:"consumer_claim_prefixes"`
+}
+
+// KAOSSharing configures pkg/kaos/sharing. Modified by KAOS (PRD novelcore/kaos#1283 F-12).
+type KAOSSharing struct {
+	// PeersPath is the JSON file naming this project and its sibling projects' lakeFS
+	// endpoints, normally a mounted ConfigMap. Empty: sharing is off.
+	PeersPath string `mapstructure:"peers_path"`
+	// MachineKeyPath is this project's Zitadel machine key (JSON), which mints the token sent to
+	// peers. Re-read on every mint.
+	MachineKeyPath string `mapstructure:"machine_key_path"`
+	// Interval is how often PeersPath is re-read (zero: 1m).
+	Interval time.Duration `mapstructure:"interval"`
+	// CacheTTL is how long a peer's answer is reused (zero: 60s).
+	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+	// Unknown collects kaos.sharing.* keys this build does not know, so a newer chart cannot stop
+	// the server from starting.
+	Unknown map[string]any `mapstructure:",remain"`
 }
 
 // KAOSBrowserLogin configures the browser login of pkg/auth/tokenid. Modified by KAOS (PRD

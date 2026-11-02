@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 )
 
 type fakeCatalog struct {
+	mu      sync.Mutex // Run (kick_test.go) reads it from its own goroutine
 	repos   map[string]*catalog.Repository
 	md      map[string]graveler.RepositoryMetadata
 	created []string
@@ -27,11 +29,15 @@ func newFake() *fakeCatalog {
 }
 
 func (f *fakeCatalog) add(name string, md map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.repos[name] = &catalog.Repository{Name: name}
 	f.md[name] = maps.Clone(md)
 }
 
 func (f *fakeCatalog) GetRepository(_ context.Context, name string) (*catalog.Repository, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if r, ok := f.repos[name]; ok {
 		return r, nil
 	}
@@ -39,12 +45,16 @@ func (f *fakeCatalog) GetRepository(_ context.Context, name string) (*catalog.Re
 }
 
 func (f *fakeCatalog) CreateRepository(_ context.Context, name, storageID, ns, branch string, _ bool) (*catalog.Repository, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r := &catalog.Repository{Name: name, StorageID: storageID, StorageNamespace: ns, DefaultBranch: branch}
 	f.repos[name], f.created = r, append(f.created, name)
 	return r, nil
 }
 
 func (f *fakeCatalog) GetCommit(_ context.Context, name, _ string) (*catalog.CommitLog, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if _, ok := f.repos[name]; !ok {
 		return nil, graveler.ErrRepositoryNotFound
 	}
@@ -55,10 +65,14 @@ func (f *fakeCatalog) GetCommit(_ context.Context, name, _ string) (*catalog.Com
 }
 
 func (f *fakeCatalog) GetRepositoryMetadata(_ context.Context, name string) (graveler.RepositoryMetadata, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return maps.Clone(f.md[name]), nil
 }
 
 func (f *fakeCatalog) UpdateRepositoryMetadata(_ context.Context, name string, md graveler.RepositoryMetadata) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.md[name] == nil {
 		f.md[name] = graveler.RepositoryMetadata{}
 	}
@@ -67,6 +81,8 @@ func (f *fakeCatalog) UpdateRepositoryMetadata(_ context.Context, name string, m
 }
 
 func (f *fakeCatalog) DeleteRepositoryMetadata(_ context.Context, name string, keys []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, k := range keys {
 		delete(f.md[name], k)
 	}
@@ -74,6 +90,8 @@ func (f *fakeCatalog) DeleteRepositoryMetadata(_ context.Context, name string, k
 }
 
 func (f *fakeCatalog) ListRepositories(_ context.Context, limit int, prefix, _, after string, _ ...catalog.ListRepositoriesOptionsFunc) ([]*catalog.Repository, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	names := slices.Sorted(maps.Keys(f.repos))
 	var page []*catalog.Repository
 	for _, n := range names {

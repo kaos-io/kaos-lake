@@ -1,4 +1,4 @@
-// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-07): new file, Apache-2.0.
+// KAOS (kaos-lake, PRD novelcore/kaos#1283 F-07, F-12): new file, Apache-2.0.
 
 package datacatalog_test
 
@@ -76,4 +76,46 @@ func TestHandler(t *testing.T) {
 	var body struct{ Datasets []datacatalog.Dataset }
 	require.NoError(t, json.Unmarshal(ok.Body.Bytes(), &body))
 	require.Len(t, body.Datasets, 2)
+}
+
+// F-12: with sharing on, the datasets peers share follow the project's own; without it the
+// answer is the project's own datasets only, as before.
+func TestHandler_Shared(t *testing.T) {
+	shared := datacatalog.Dataset{Name: "cars/dataset-roads", Owner: "cars", Versions: []datacatalog.Version{}}
+	h := datacatalog.Handler{Catalog: fake{}, Namespaces: []string{"vision-ci"},
+		Verify: func(context.Context, string, []string) (string, error) { return "vision-ci", nil }}
+	get := func() []datacatalog.Dataset {
+		r := httptest.NewRequest(http.MethodGet, "/kaos/v1/catalog", nil)
+		r.Header.Set("Authorization", "Bearer ci-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body struct{ Datasets []datacatalog.Dataset }
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body.Datasets
+	}
+	own := get()
+	require.Len(t, own, 2)
+	asked := 0
+	h.Shared = func(context.Context) []datacatalog.Dataset { asked++; return []datacatalog.Dataset{shared} }
+	require.Equal(t, append(own, shared), get())
+	require.Equal(t, 1, asked)
+
+	h.Verify = func(context.Context, string, []string) (string, error) { return "", errors.New("denied") }
+	r := httptest.NewRequest(http.MethodGet, "/kaos/v1/catalog", nil)
+	r.Header.Set("Authorization", "Bearer other")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t, 1, asked, "peers are never asked for a caller the catalog refuses")
+}
+
+// Owner is left out of the project's own datasets.
+func TestDataset_OwnerOmitted(t *testing.T) {
+	raw, err := json.Marshal(datacatalog.Dataset{Name: "dataset-cars", Versions: []datacatalog.Version{}})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"name":"dataset-cars","versions":[]}`, string(raw))
+	raw, err = json.Marshal(datacatalog.Dataset{Name: "cars/dataset-roads", Owner: "cars", Versions: []datacatalog.Version{}})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"name":"cars/dataset-roads","owner":"cars","versions":[]}`, string(raw))
 }
