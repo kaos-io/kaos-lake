@@ -54,7 +54,7 @@ func TestDisallowedOrigin(t *testing.T) {
 }
 
 func TestPreflight(t *testing.T) {
-	rec := serve([]string{console}, http.MethodOptions, "/api/v1/repositories/x/tags", console,
+	rec := serve([]string{console}, http.MethodOptions, "/api/v1/repositories/x/branches", console,
 		map[string]string{"Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"})
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	h := rec.Header()
@@ -93,4 +93,41 @@ func TestOffAndInvalidEntries(t *testing.T) {
 	noCORS(t, serve(nil, http.MethodGet, "/api/v1/repositories", console, nil))
 	noCORS(t, serve([]string{"*", "https://a.example/path", "null"}, http.MethodGet, "/api/v1/repositories", "https://a.example", nil))
 	noCORS(t, serve([]string{"*"}, http.MethodGet, "/api/v1/repositories", "*", nil))
+}
+
+// PRD novelcore/kaos#1283 F-11: the console's dataset page writes a repository's labels and
+// releases versions, and nothing else.
+func TestConsoleWrites(t *testing.T) {
+	pre := func(path, m string) *httptest.ResponseRecorder {
+		return serve([]string{console}, http.MethodOptions, path, console, map[string]string{"Access-Control-Request-Method": m})
+	}
+	for _, c := range []struct{ path, method, methods string }{
+		{"/api/v1/repositories/dataset-coco/metadata", "POST", "GET, POST, DELETE, OPTIONS"},
+		{"/api/v1/repositories/dataset-coco/metadata", "DELETE", "GET, POST, DELETE, OPTIONS"},
+		{"/api/v1/repositories/dataset-coco/tags", "POST", "GET, POST, OPTIONS"},
+	} {
+		rec := pre(c.path, c.method)
+		require.Equal(t, http.StatusNoContent, rec.Code, c.method+" "+c.path)
+		require.Equal(t, c.methods, rec.Header().Get("Access-Control-Allow-Methods"))
+		require.Empty(t, rec.Header().Get("Access-Control-Allow-Credentials"))
+		real := serve([]string{console}, c.method, c.path, console, nil)
+		require.Equal(t, http.StatusTeapot, real.Code, "authorization stays lakeFS's")
+		require.Equal(t, console, real.Header().Get("Access-Control-Allow-Origin"))
+	}
+	for _, c := range []struct{ path, method string }{
+		{"/api/v1/repositories/dataset-coco/tags", "DELETE"},
+		{"/api/v1/repositories/dataset-coco/metadata", "PUT"},
+		{"/api/v1/repositories/dataset-coco", "DELETE"},
+		{"/api/v1/repositories/dataset-coco/branches", "POST"},
+		{"/api/v1/repositories/dataset-coco/tags/v1", "DELETE"},
+		{"/api/v1/repositories/a/b/metadata", "POST"},
+		{"/api/v1/auth/users", "POST"},
+	} {
+		rec := pre(c.path, c.method)
+		require.Equal(t, http.StatusForbidden, rec.Code, c.method+" "+c.path)
+		require.Empty(t, rec.Header().Get("Access-Control-Allow-Origin"))
+		require.Empty(t, serve([]string{console}, c.method, c.path, console, nil).Header().Get("Access-Control-Allow-Origin"), c.method+" "+c.path)
+	}
+	// a write from another origin gets no grant
+	noCORS(t, serve([]string{console}, http.MethodPost, "/api/v1/repositories/dataset-coco/metadata", "https://evil.example", nil))
 }
