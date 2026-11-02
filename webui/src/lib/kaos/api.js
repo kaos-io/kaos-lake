@@ -36,8 +36,18 @@ export const setRepoMetadata = (repoId, metadata) =>
         body: JSON.stringify({ metadata }),
     });
 
-/** KAOS settings of the UI: { console_url } (empty when there is no console link). */
-export const getUIConfig = () => request('/kaos/v1/ui');
+/** KAOS settings of the UI: { console_url, legacy_repository } (each empty when unset). Read once per
+ * page load: every repository's badge needs it. A failed read is retried on the next call. */
+let uiConfig = null;
+export const getUIConfig = () => {
+    if (!uiConfig) {
+        uiConfig = request('/kaos/v1/ui').catch((e) => {
+            uiConfig = null;
+            throw e;
+        });
+    }
+    return uiConfig;
+};
 
 export const listTemplates = () => request('/kaos/v1/dataset-templates');
 

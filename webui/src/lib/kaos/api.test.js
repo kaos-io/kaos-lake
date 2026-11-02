@@ -20,7 +20,7 @@ vi.mock('../api', () => ({
     pulls: { create: vi.fn(async (repo, p) => ({ id: 'pr1', ...p })) },
 }));
 
-import { createDataset, proposeChange, releaseVersion } from './api';
+import { createDataset, getUIConfig, proposeChange, releaseVersion } from './api';
 
 beforeEach(() => {
     calls.length = 0;
@@ -82,5 +82,21 @@ describe('proposeChange', () => {
         expect(calls[1]).toEqual(['upload', 'dataset-cars', branch, 'data.yaml']);
         expect(calls[2]).toEqual(['commit', 'dataset-cars', branch, 'Edit classes']);
         expect(pr).toMatchObject({ source_branch: branch, destination_branch: 'main', title: 'Edit classes' });
+    });
+});
+
+describe('getUIConfig', () => {
+    it('reads the settings once for all badges, and again after a failure', async () => {
+        let fail = true;
+        globalThis.fetch = vi.fn(async () => {
+            if (fail) return { ok: false, status: 503, json: async () => ({}) };
+            return { ok: true, status: 200, json: async () => ({ console_url: '', legacy_repository: 'proj' }) };
+        });
+        await expect(getUIConfig()).rejects.toBeTruthy();
+        fail = false;
+        const [a, b] = await Promise.all([getUIConfig(), getUIConfig()]);
+        expect(a.legacy_repository).toBe('proj');
+        expect(b).toBe(a);
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 });

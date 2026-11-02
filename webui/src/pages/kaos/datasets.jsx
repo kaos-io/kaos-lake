@@ -7,14 +7,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Button from 'react-bootstrap/Button';
 import Card from 'react-bootstrap/Card';
 import Container from 'react-bootstrap/Container';
-import Form from 'react-bootstrap/Form';
-import InputGroup from 'react-bootstrap/InputGroup';
 import Nav from 'react-bootstrap/Nav';
 import { useParams, useSearchParams } from 'react-router-dom';
 
 import { AlertError, ClipboardButton, Loading } from '../../lib/components/controls';
 import { Link } from '../../lib/components/nav';
-import { DATASET_PREFIX, listByPrefix, listVersions, releaseVersion, setRepoMetadata } from '../../lib/kaos/api';
+import { DATASET_PREFIX, listByPrefix, listVersions, releaseVersion } from '../../lib/kaos/api';
 import {
     CLI_README_URL,
     browseHref,
@@ -25,49 +23,24 @@ import {
     branchesHref,
 } from '../../lib/kaos/pipeline';
 import { PipelineUsage } from '../../lib/kaos/pipelineUsage';
+import { useConsoleUrl } from '../../lib/kaos/consoleLink';
 import { PurposeBadge, useRepoLabels } from '../../lib/kaos/purpose';
 import { templateTitle } from '../../lib/kaos/templates';
 import MeluxinaTab from './meluxina';
 
-/** Share a dataset with other projects of the organisation (D-09); only the project's admins may. */
-const ShareForm = ({ repoId, labels, onDone }) => {
-    const [value, setValue] = useState(labels['kaos.shared_with'] || '');
-    const [error, setError] = useState(null);
-    const [saving, setSaving] = useState(false);
-    const save = async (e) => {
-        e.preventDefault();
-        setSaving(true);
-        setError(null);
-        try {
-            const projects = value
-                .split(',')
-                .map((p) => p.trim())
-                .filter(Boolean)
-                .join(',');
-            await setRepoMetadata(repoId, { 'kaos.shared_with': projects });
-            onDone();
-        } catch (err) {
-            setError(err);
-        } finally {
-            setSaving(false);
-        }
-    };
+/** Sharing is set in the KAOS console (PRD novelcore/kaos#1283 F-11); here it is only shown. */
+const SharingNote = ({ labels }) => {
+    const consoleUrl = useConsoleUrl();
+    const shared = (labels['kaos.shared_with'] || '').trim() !== '';
+    if (!consoleUrl) return null;
     return (
-        <Form onSubmit={save} className="mt-2">
-            <InputGroup size="sm">
-                <InputGroup.Text>Share with projects</InputGroup.Text>
-                <Form.Control value={value} placeholder="orbits, vision" onChange={(e) => setValue(e.target.value)} />
-                <Button type="submit" size="sm" variant="success" disabled={saving}>
-                    {saving ? 'Saving…' : 'Save'}
-                </Button>
-            </InputGroup>
-            <Form.Text muted>
-                Read-only for those projects, in this organisation. The data stays where it is
-                {labels['kaos.location'] ? ` (${labels['kaos.location']})` : ''}; they read it from there. Empty stops
-                sharing.
-            </Form.Text>
-            {error && <AlertError className="mt-2" error={error} onDismiss={() => setError(null)} />}
-        </Form>
+        <div className="small text-muted mt-1">
+            {shared ? 'Sharing is managed' : 'Share it with other projects'} in the{' '}
+            <a href={`${consoleUrl.replace(/\/+$/, '')}/datasets`} target="_blank" rel="noreferrer">
+                KAOS console
+            </a>
+            .
+        </div>
     );
 };
 
@@ -102,9 +75,7 @@ const NextSteps = ({ repoId, hasVersion }) => (
 );
 
 export const DatasetCard = ({ repo, detail = false, created = false }) => {
-    const [refresh, setRefresh] = useState(0);
-    const labels = useRepoLabels(repo.id, refresh);
-    const [sharing, setSharing] = useState(false);
+    const labels = useRepoLabels(repo.id);
     const [usage, setUsage] = useState(detail);
     const [versions, setVersions] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -141,7 +112,7 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                     <div>
                         <h5 className="mb-1">
                             <Link href={datasetHref(repo.id)}>{repo.id}</Link>
-                            <PurposeBadge labels={labels} />
+                            <PurposeBadge labels={labels} repoId={repo.id} />
                         </h5>
                         {labels['kaos.description'] && <div className="text-muted">{labels['kaos.description']}</div>}
                         <div className="small text-muted mt-1">
@@ -158,13 +129,11 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                                 Open pull requests
                             </Link>
                         </div>
+                        <SharingNote labels={labels} />
                     </div>
                     <div className="d-flex gap-2">
                         <Button size="sm" variant="outline-secondary" onClick={() => setUsage(!usage)}>
                             How to use in a pipeline
-                        </Button>
-                        <Button size="sm" variant="outline-secondary" onClick={() => setSharing(!sharing)}>
-                            Share
                         </Button>
                         <Button
                             size="sm"
@@ -178,16 +147,6 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                     </div>
                 </div>
                 {created && <NextSteps repoId={repo.id} hasVersion={!!latest} />}
-                {sharing && (
-                    <ShareForm
-                        repoId={repo.id}
-                        labels={labels}
-                        onDone={() => {
-                            setSharing(false);
-                            setRefresh(refresh + 1);
-                        }}
-                    />
-                )}
                 {released && (
                     <div className="small text-success mt-2">
                         Released {released}. Use it in a pipeline as{' '}
