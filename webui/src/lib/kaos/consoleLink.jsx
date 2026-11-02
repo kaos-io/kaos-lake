@@ -6,20 +6,23 @@ import Nav from 'react-bootstrap/Nav';
 
 import { getUIConfig } from './api';
 
-/** The console URL from the server, or '' (none, or not reachable). */
-export const useConsoleUrl = () => {
-    const [url, setUrl] = useState('');
+/** The KAOS UI settings from the server, {} while loading or when not reachable. */
+export const useUIConfig = () => {
+    const [config, setConfig] = useState({});
     useEffect(() => {
         let live = true;
         getUIConfig()
-            .then((c) => live && setUrl(c.console_url || ''))
-            .catch(() => live && setUrl(''));
+            .then((c) => live && setConfig(c || {}))
+            .catch(() => live && setConfig({}));
         return () => {
             live = false;
         };
     }, []);
-    return url;
+    return config;
 };
+
+/** The console URL from the server, or '' (none, or not reachable). */
+export const useConsoleUrl = () => useUIConfig().console_url || '';
 
 /** "KAOS console" in the top bar; nothing when no console is configured. */
 export const ConsoleLink = () => {

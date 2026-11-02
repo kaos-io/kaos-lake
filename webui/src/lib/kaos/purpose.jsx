@@ -5,6 +5,7 @@ import React, { useEffect, useState } from 'react';
 import Badge from 'react-bootstrap/Badge';
 
 import { KIND, repoMetadata } from './api';
+import { useUIConfig } from './consoleLink';
 
 export const PURPOSE_COLOURS = { dataset: '#2e7d32', outputs: '#6f42c1', other: '#6c757d' };
 
@@ -56,15 +57,17 @@ export const PlaceBadges = ({ labels }) => (
     </>
 );
 
-/** Dataset (green, Default), Outputs (violet, with the app), Orphaned, or Other (grey); then place. */
-export const PurposeBadge = ({ labels }) => (
+/** Dataset (green, Default), Outputs (violet, with the app), Orphaned, Project repository (the
+ * legacy one, grey) or Other (grey); then place. */
+export const PurposeBadge = ({ labels, repoId = '' }) => (
     <>
-        <KindBadge labels={labels} />
+        <KindBadge labels={labels} repoId={repoId} />
         <PlaceBadges labels={labels} />
     </>
 );
 
-const KindBadge = ({ labels }) => {
+const KindBadge = ({ labels, repoId }) => {
+    const legacy = useUIConfig().legacy_repository;
     const kind = labels['kaos.kind'];
     if (kind === KIND.dataset) {
         return (
@@ -94,6 +97,16 @@ const KindBadge = ({ labels }) => {
             </>
         );
     }
+    if (repoId && repoId === legacy) {
+        return (
+            <Pill
+                colour={PURPOSE_COLOURS.other}
+                title="The project's repository from before datasets: ML apps created earlier keep their data here"
+            >
+                Project repository
+            </Pill>
+        );
+    }
     return (
         <Pill colour={PURPOSE_COLOURS.other} title="Not a dataset or app outputs">
             Other
@@ -102,4 +115,4 @@ const KindBadge = ({ labels }) => {
 };
 
 /** PurposeBadge for one repository, reading its labels. */
-export const RepoPurposeBadge = ({ repoId }) => <PurposeBadge labels={useRepoLabels(repoId)} />;
+export const RepoPurposeBadge = ({ repoId }) => <PurposeBadge labels={useRepoLabels(repoId)} repoId={repoId} />;

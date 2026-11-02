@@ -1,7 +1,10 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283 F-03): new file, Apache-2.0.
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+
+const uiConfig = { legacy_repository: 'e2e-proj' };
+vi.mock('./consoleLink', () => ({ useUIConfig: () => uiConfig }));
 
 import { PurposeBadge, PURPOSE_COLOURS } from './purpose';
 
@@ -20,6 +23,24 @@ describe('PurposeBadge', () => {
         render(<PurposeBadge labels={{}} />);
         expect(screen.getByText('Other')).toBeTruthy();
         expect(PURPOSE_COLOURS.other).toBe('#6c757d');
+    });
+    it("names the project's legacy repository instead of other", () => {
+        render(<PurposeBadge labels={{}} repoId="e2e-proj" />);
+        expect(screen.getByText('Project repository')).toBeTruthy();
+        expect(screen.queryByText('Other')).toBeNull();
+    });
+    it('keeps other for any other unlabelled repository', () => {
+        render(<PurposeBadge labels={{}} repoId="my-own-repo" />);
+        expect(screen.getByText('Other')).toBeTruthy();
+    });
+    it('a labelled dataset named like the legacy repository is still a dataset', () => {
+        render(<PurposeBadge labels={{ 'kaos.kind': 'dataset' }} repoId="e2e-proj" />);
+        expect(screen.getByText('Dataset')).toBeTruthy();
+        expect(screen.queryByText('Project repository')).toBeNull();
+    });
+    it('shows who a dataset is shared with (read-only)', () => {
+        render(<PurposeBadge labels={{ 'kaos.kind': 'dataset', 'kaos.shared_with': ' orbits ,vision,' }} />);
+        expect(screen.getByText('Shared with orbits, vision')).toBeTruthy();
     });
 });
 
