@@ -21,15 +21,29 @@ export const useUIConfig = () => {
     return config;
 };
 
-/** The console URL from the server, or '' (none, or not reachable). */
-export const useConsoleUrl = () => useUIConfig().console_url || '';
+/**
+ * A page of the KAOS console: `<console>/dashboard/<area>`, filtered to `project` when given (the
+ * console's pages live under /dashboard; its Datasets and Models filters take the project name).
+ * '' without a console.
+ */
+export const consoleHref = (consoleUrl, area, project = '') => {
+    if (!consoleUrl) return '';
+    const base = `${consoleUrl.replace(/\/+$/, '')}/dashboard/${area}`;
+    return project ? `${base}?project=${encodeURIComponent(project)}` : base;
+};
 
-/** "KAOS console" in the top bar; nothing when no console is configured. */
+/** The console's page `area` for this lakeFS's project, or '' without a console. */
+export const useConsoleHref = (area) => {
+    const config = useUIConfig();
+    return consoleHref(config.console_url || '', area, config.project || '');
+};
+
+/** "KAOS console" in the top bar, back to this project's Datasets; nothing without a console. */
 export const ConsoleLink = () => {
-    const url = useConsoleUrl();
-    if (!url) return null;
+    const href = useConsoleHref('datasets');
+    if (!href) return null;
     return (
-        <Nav.Link href={url} title="Back to the KAOS console">
+        <Nav.Link href={href} title="Back to this project's datasets in the KAOS console">
             ← KAOS console
         </Nav.Link>
     );

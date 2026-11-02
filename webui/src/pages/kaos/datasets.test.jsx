@@ -5,7 +5,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const uiConfig = { meluxina: false };
-vi.mock('../../lib/kaos/consoleLink', () => ({ useUIConfig: () => uiConfig, useConsoleUrl: () => '' }));
+vi.mock('../../lib/kaos/consoleLink', () => ({ useUIConfig: () => uiConfig, useConsoleHref: () => '' }));
 vi.mock('../../lib/kaos/api', async (orig) => ({ ...(await orig()), listByPrefix: async () => [] }));
 vi.mock('./meluxina', () => ({ default: () => <div>meluxina view</div> }));
 

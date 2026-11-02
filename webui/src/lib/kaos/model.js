@@ -52,8 +52,9 @@ export const datasetOf = (ref) => {
     return m ? { repo: m[1], version: m[2] } : null;
 };
 
-/** The KAOS console's Models area, or '' without a console. */
-export const consoleModelsUrl = (consoleUrl) => (consoleUrl ? `${trim(consoleUrl)}/models` : '');
+/** The KAOS console's Models area (under /dashboard), for `project` when given; '' without a console. */
+export const consoleModelsUrl = (consoleUrl, project = '') =>
+    consoleUrl ? `${trim(consoleUrl)}/dashboard/models${project ? `?project=${encodeURIComponent(project)}` : ''}` : '';
 
 /** MLflow's registered models, or '' without MLflow. */
 export const mlflowModelsUrl = (mlflowUrl) => (mlflowUrl ? `${trim(mlflowUrl)}/#/models` : '');

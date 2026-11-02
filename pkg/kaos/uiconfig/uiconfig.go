@@ -20,6 +20,9 @@ type Handler struct {
 	MLflowURL        string
 	LegacyRepository string
 	Meluxina         bool
+	// Project is this lakeFS's own project (kaos.token_identity.project), so links back to the
+	// console open its pages for this project.
+	Project string
 }
 
 // Valid reports whether u is empty (no link) or an absolute http(s) URL.
@@ -44,5 +47,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 		"mlflow_url":        link(h.MLflowURL),
 		"legacy_repository": h.LegacyRepository,
 		"meluxina":          h.Meluxina,
+		"project":           h.Project,
 	})
 }

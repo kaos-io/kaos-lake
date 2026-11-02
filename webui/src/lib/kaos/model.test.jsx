@@ -137,7 +137,10 @@ describe('runRow', () => {
 
 describe('links', () => {
     it('links the console and MLflow only when configured', () => {
-        expect(consoleModelsUrl('https://org.console.kaos.eu/')).toBe('https://org.console.kaos.eu/models');
+        expect(consoleModelsUrl('https://org.console.kaos.eu/')).toBe('https://org.console.kaos.eu/dashboard/models');
+        expect(consoleModelsUrl('https://org.console.kaos.eu', 'my proj')).toBe(
+            'https://org.console.kaos.eu/dashboard/models?project=my%20proj',
+        );
         expect(consoleModelsUrl('')).toBe('');
         expect(mlflowModelsUrl('https://mlflow.kaos.eu')).toBe('https://mlflow.kaos.eu/#/models');
         expect(mlflowModelsUrl(undefined)).toBe('');
@@ -171,7 +174,7 @@ describe('links', () => {
         );
         expect(screen.getByText('Model of yolo')).toBeTruthy();
         expect(screen.getByText('Models in the KAOS console').getAttribute('href')).toBe(
-            'https://org.console.kaos.eu/models',
+            'https://org.console.kaos.eu/dashboard/models',
         );
         expect(screen.getByText('Open in MLflow').getAttribute('href')).toBe('https://mlflow.kaos.eu/#/models');
     });

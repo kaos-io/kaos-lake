@@ -179,6 +179,7 @@ func Serve(
 		MLflowURL:        cfg.GetBaseConfig().KAOS.UI.MLflowURL,
 		LegacyRepository: cfg.GetBaseConfig().KAOS.Repositories.LegacyRepository,
 		Meluxina:         meluxinaServed,
+		Project:          cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
 	})
 	r.Get("/kaos/v1/dataset-templates", th.List)
 	r.Post("/kaos/v1/dataset-templates/{name}/render", th.Render)
