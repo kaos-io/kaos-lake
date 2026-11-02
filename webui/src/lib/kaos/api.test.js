@@ -20,7 +20,14 @@ vi.mock('../api', () => ({
     pulls: { create: vi.fn(async (repo, p) => ({ id: 'pr1', ...p })) },
 }));
 
-import { createDataset, getSharedWithUs, getUIConfig, proposeChange, releaseVersion } from './api';
+import {
+    createDataset,
+    getSharedWithUs,
+    getUIConfig,
+    newStorageNamespace,
+    proposeChange,
+    releaseVersion,
+} from './api';
 
 beforeEach(() => {
     calls.length = 0;
@@ -63,13 +70,23 @@ describe('createDataset', () => {
         ]);
         expect(calls[1][1]).toEqual({
             name: 'dataset-cars',
-            storage_namespace: 'gs://b/lake/dataset-cars',
+            storage_namespace: expect.stringMatching(/^gs:\/\/b\/lake\/dataset-cars-[0-9a-f]{8}$/),
             default_branch: 'main',
         });
         expect(calls[5][3]).toEqual({
             metadata: { 'kaos.kind': 'dataset', 'kaos.template': 'yolo', 'kaos.description': 'Cars' },
         });
         expect(steps[0]).toBe('Rendering the layout');
+    });
+});
+
+describe('newStorageNamespace', () => {
+    it('is new for every creation, so a deleted name can be created again', () => {
+        const a = newStorageNamespace('gs://b/lake/', 'dataset-cars');
+        const b = newStorageNamespace('gs://b/lake', 'dataset-cars');
+        expect(a).toMatch(/^gs:\/\/b\/lake\/dataset-cars-[0-9a-f]{8}$/);
+        expect(b).toMatch(/^gs:\/\/b\/lake\/dataset-cars-[0-9a-f]{8}$/);
+        expect(a).not.toBe(b);
     });
 });
 

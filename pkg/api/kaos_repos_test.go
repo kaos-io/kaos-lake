@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/treeverse/lakefs/pkg/api/apigen"
 	"github.com/treeverse/lakefs/pkg/api/apiutil"
+	"github.com/treeverse/lakefs/pkg/config"
 )
 
 // CON-02: the metadata API keeps repository labels meaningful and says why it refuses one.
@@ -64,4 +65,52 @@ func TestController_DatasetSharing(t *testing.T) {
 	}
 	require.Equal(t, http.StatusNoContent, share("dataset-shared"))
 	require.Equal(t, http.StatusBadRequest, share("plain-shared"))
+}
+
+// A deleted repository leaves its storage namespace's _lakefs/dummy marker behind (lakeFS keeps the data), so
+// the namespace cannot be reused: creating the same name at the same namespace again is refused. Creators
+// therefore choose a new namespace for every creation (kaos-lib `_storage_namespace`, the UI's `newStorageNamespace`).
+func TestController_RecreateSameNameNeedsNewStorageNamespace(t *testing.T) {
+	clt, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	create := func(name, ns string) *apigen.CreateRepositoryResponse {
+		resp, err := clt.CreateRepositoryWithResponse(ctx, &apigen.CreateRepositoryParams{}, apigen.CreateRepositoryJSONRequestBody{
+			DefaultBranch: apiutil.Ptr("main"), Name: name, StorageNamespace: onBlock(deps, ns),
+		})
+		require.NoError(t, err)
+		return resp
+	}
+	const name = "dataset-recreate"
+
+	first := create(name, "datasets/dataset-recreate-a1b2c3d4")
+	require.Equal(t, http.StatusCreated, first.StatusCode(), string(first.Body))
+	del, err := clt.DeleteRepositoryWithResponse(ctx, name, &apigen.DeleteRepositoryParams{})
+	verifyResponseOK(t, del, err)
+
+	// The old namespace is refused: this is the bug when both creators chose <prefix>/<name>.
+	same := create(name, "datasets/dataset-recreate-a1b2c3d4")
+	require.Equal(t, http.StatusBadRequest, same.StatusCode())
+	require.Contains(t, string(same.Body), "storage namespace already in use")
+
+	// A fresh namespace for the same name works, and so does deleting and recreating again.
+	for _, id := range []string{"e5f6a7b8", "c9d0e1f2"} {
+		again := create(name, "datasets/dataset-recreate-"+id)
+		require.Equal(t, http.StatusCreated, again.StatusCode(), string(again.Body))
+		del, err := clt.DeleteRepositoryWithResponse(ctx, name, &apigen.DeleteRepositoryParams{})
+		verifyResponseOK(t, del, err)
+	}
+}
+
+// Platform repositories (pkg/kaos/repos) are created through the catalog, which neither writes nor checks the
+// dummy marker, so they come back at their old namespace after a delete.
+func TestController_CatalogRecreateReusesNamespace(t *testing.T) {
+	_, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	const name = "dataset-default"
+	ns := onBlock(deps, "datasets/dataset-default")
+	for range 2 {
+		_, err := deps.catalog.CreateRepository(ctx, name, config.SingleBlockstoreID, ns, "main", false)
+		require.NoError(t, err)
+		require.NoError(t, deps.catalog.DeleteRepository(ctx, name))
+	}
 }

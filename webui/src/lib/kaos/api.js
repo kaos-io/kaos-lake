@@ -115,6 +115,16 @@ export const listByPrefix = async (prefix) => {
 };
 
 /**
+ * A storage namespace no repository has used: `<prefix>/<name>-<8 hex>`. lakeFS keeps a deleted repository's data
+ * and its `_lakefs/dummy` marker, and refuses to create over them, so `<prefix>/<name>` could be used once only:
+ * delete and recreate of the same name failed. Every creation picks a new one; nothing is ever deleted.
+ */
+export const newStorageNamespace = (prefix, name) => {
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${prefix.replace(/\/+$/, '')}/${name}-${id}`;
+};
+
+/**
  * Creates dataset `name` from the layout `template` as the signed-in person: the repository, one commit of the
  * rendered files on main, then its labels. onStep reports progress.
  */
@@ -128,7 +138,7 @@ export const createDataset = async (
     onStep('Creating the repository');
     await repositories.create({
         name,
-        storage_namespace: `${storagePrefix.replace(/\/+$/, '')}/${name}`,
+        storage_namespace: newStorageNamespace(storagePrefix, name),
         default_branch: 'main',
     });
     for (const f of files) {
