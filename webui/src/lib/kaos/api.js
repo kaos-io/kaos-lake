@@ -128,11 +128,27 @@ export const newStorageNamespace = (prefix, name) => {
  * Creates dataset `name` from the layout `template` as the signed-in person: the repository, one commit of the
  * rendered files on main, then its labels. onStep reports progress.
  */
+/** The "no layout" choice, the default (owner, 2026-11-03): an empty dataset, like `kaosctl dataset create --layout none`. */
+export const NO_LAYOUT = 'none';
+
 export const createDataset = async (
     { name, description, template: asked, values, storagePrefix },
     onStep = () => {},
 ) => {
     const template = canonicalTemplate(asked); // new datasets carry the layout's current name
+    if (template === NO_LAYOUT) {
+        onStep('Creating the repository');
+        await repositories.create({
+            name,
+            storage_namespace: newStorageNamespace(storagePrefix, name),
+            default_branch: 'main',
+        });
+        onStep('Labelling');
+        const metadata = { 'kaos.kind': KIND.dataset };
+        if (description.trim()) metadata['kaos.description'] = description.trim();
+        await setRepoMetadata(name, metadata);
+        return;
+    }
     onStep('Rendering the layout');
     const { files } = await renderTemplate(template, name, description, values);
     onStep('Creating the repository');
