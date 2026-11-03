@@ -276,6 +276,18 @@ func TestHandler(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, code)
 	code, _ = do(t, router(h, ""), http.MethodPost, "/kaos/v1/dataset-templates/yolo/validate", `{"repository":"dataset-pets","ref":"main"}`)
 	require.Equal(t, http.StatusUnauthorized, code)
+
+	// No anonymous caller reads the layouts (the project's own among them) or the storage prefix.
+	anon := router(h, "")
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodGet, "/kaos/v1/dataset-templates", ""},
+		{http.MethodPost, "/kaos/v1/dataset-templates/yolo/render", `{"name":"dataset-cars","values":{"classes":["car"]}}`},
+		{http.MethodPost, "/kaos/v1/dataset-templates/yolo/parse", `{"content":"names: [a, b]"}`},
+	} {
+		code, out := do(t, anon, c.method, c.path, c.body)
+		require.Equal(t, http.StatusUnauthorized, code, c.path)
+		require.NotContains(t, out, "storage_namespace_prefix", c.path)
+	}
 }
 
 // Content beyond the read budget is skipped, and the answer says the check was partial.
