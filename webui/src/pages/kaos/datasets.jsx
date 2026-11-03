@@ -57,9 +57,9 @@ const NextSteps = ({ repoId, hasVersion }) => (
                 <Link href={branchesHref(repoId)}>the branches page</Link>, upload files to it and open a pull request
                 (main changes only when a pull request is merged). Or from a terminal, with the{' '}
                 <a href={CLI_README_URL} target="_blank" rel="noreferrer">
-                    kubecore CLI
+                    kaosctl CLI
                 </a>{' '}
-                (<code>kubecore login</code> first; <code>kubecore dataset validate &lt;folder&gt;</code> checks the
+                (<code>kaosctl login</code> first; <code>kaosctl dataset validate &lt;folder&gt;</code> checks the
                 layout): <code className="user-select-all">{pushCommand(repoId)}</code>
                 <ClipboardButton variant="link" size="sm" text={pushCommand(repoId)} tooltip="Copy the command" />
                 opens a pull request to merge.

@@ -110,8 +110,8 @@ describe('names and commands', () => {
     });
     it('gives the exact strings people copy', () => {
         expect(pipelineRef('dataset-cars', 'v3')).toBe('dataset = dataset-cars@v3');
-        expect(pushCommand('dataset-cars')).toBe('kubecore dataset push <folder> dataset-cars -m "<message>"');
-        expect(releaseCommand('dataset-cars')).toBe('kubecore dataset release dataset-cars');
+        expect(pushCommand('dataset-cars')).toBe('kaosctl dataset push <folder> dataset-cars -m "<message>"');
+        expect(releaseCommand('dataset-cars')).toBe('kaosctl dataset release dataset-cars');
         expect(CLI_README_URL).not.toMatch(/@[0-9a-f]{7,}/);
     });
 });
