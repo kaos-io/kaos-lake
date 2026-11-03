@@ -44,6 +44,9 @@ func (h Handler) store() ProjectStore {
 // List answers the layouts (built-in and the project's, each with its source and whole spec), the
 // project layouts left out and why, and the storage namespace prefix for new datasets.
 func (h Handler) List(w http.ResponseWriter, r *http.Request) {
+	if !signedIn(w, r) {
+		return
+	}
 	all, problems, err := All(r.Context(), h.store())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
@@ -60,6 +63,9 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Render answers the files of a new dataset: {name, description, values} in, {files} out.
 func (h Handler) Render(w http.ResponseWriter, r *http.Request) {
+	if !signedIn(w, r) {
+		return
+	}
 	var body struct {
 		Name        string         `json:"name"`
 		Description string         `json:"description"`
@@ -80,6 +86,9 @@ func (h Handler) Render(w http.ResponseWriter, r *http.Request) {
 
 // Parse answers the form values of a dataset's form file: {content} in, {values} out.
 func (h Handler) Parse(w http.ResponseWriter, r *http.Request) {
+	if !signedIn(w, r) {
+		return
+	}
 	var body struct {
 		Content string `json:"content"`
 	}
@@ -143,6 +152,18 @@ func (h Handler) Validate(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, map[string]any{"layout": l.Name, "repository": body.Repository, "ref": body.Ref, "problems": problems,
 		"checked": report, "hook": l.Hook, "server_checks": ServerChecks}, err)
+}
+
+// signedIn answers 401 to a caller without a user. The routes sit behind GenericAuthMiddleware,
+// which refuses bad credentials but passes a request that carries none; the layouts (the
+// project's own, from its layouts repository) and the storage namespace prefix are for the
+// project's signed-in people, not for an anonymous caller.
+func signedIn(w http.ResponseWriter, r *http.Request) bool {
+	if _, err := auth.GetUser(r.Context()); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "sign in to use dataset layouts"})
+		return false
+	}
+	return true
 }
 
 func respond(w http.ResponseWriter, ok any, err error) {
