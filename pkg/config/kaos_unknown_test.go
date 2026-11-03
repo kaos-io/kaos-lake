@@ -70,3 +70,17 @@ func TestKaosSharingAbsentIsOff(t *testing.T) {
 	require.Zero(t, baseCfg.KAOS.Sharing.CacheTTL)
 	require.Empty(t, baseCfg.KAOS.Unknown)
 }
+
+// kaos.dataset_events (PRD novelcore/kaos#1283 D-05) names the CI namespace; absent, it is off.
+func TestKaosDatasetEvents(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	require.Empty(t, baseCfg.KAOS.DatasetEvents.Namespace)
+
+	viper.Set("kaos.dataset_events.namespace", "vision-ci")
+	baseCfg, err = config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	require.Equal(t, "vision-ci", baseCfg.KAOS.DatasetEvents.Namespace)
+}

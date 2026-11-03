@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,8 +46,6 @@ type Dataset struct {
 	Latest      string    `json:"latest,omitempty"`   // main's head commit
 	Versions    []Version `json:"versions"`           // newest first
 }
-
-var versionTag = regexp.MustCompile(`^v(\d+)$`)
 
 // List returns the datasets (dataset-* repositories labelled a dataset) with their versions.
 func List(ctx context.Context, c Catalog) ([]Dataset, error) {
@@ -113,7 +110,7 @@ func versions(ctx context.Context, c Catalog, repo string) ([]Version, error) {
 		}
 		for _, t := range page {
 			after = t.ID
-			if versionTag.MatchString(t.ID) {
+			if repos.VersionTag.MatchString(t.ID) {
 				out = append(out, Version{Tag: t.ID, Commit: t.CommitID})
 			}
 		}
