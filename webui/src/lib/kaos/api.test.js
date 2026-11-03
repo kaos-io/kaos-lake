@@ -20,14 +20,7 @@ vi.mock('../api', () => ({
     pulls: { create: vi.fn(async (repo, p) => ({ id: 'pr1', ...p })) },
 }));
 
-import {
-    createDataset,
-    getSharedWithUs,
-    getUIConfig,
-    newStorageNamespace,
-    proposeChange,
-    releaseVersion,
-} from './api';
+import { createDataset, getSharedWithUs, getUIConfig, newStorageNamespace, proposeChange, releaseVersion } from './api';
 
 beforeEach(() => {
     calls.length = 0;
@@ -48,6 +41,19 @@ describe('releaseVersion', () => {
 });
 
 describe('createDataset', () => {
+    it('with no layout creates the repository and labels it, with no render and no commit', async () => {
+        await createDataset({
+            name: 'dataset-notes',
+            description: '',
+            template: 'none',
+            values: {},
+            storagePrefix: 'gs://b/lake/',
+        });
+        expect(calls.map((c) => c[0] + ':' + (c[0] === 'fetch' ? c[2] + ' ' + c[1] : c.slice(1, 2).join(' ')))).toEqual(
+            ['repo:[object Object]', 'fetch:POST /api/v1/repositories/dataset-notes/metadata'],
+        );
+        expect(calls[1][3]).toEqual({ metadata: { 'kaos.kind': 'dataset' } });
+    });
     it('renders, creates under the prefix, commits as one, then labels', async () => {
         const steps = [];
         await createDataset(

@@ -1,7 +1,7 @@
 // KAOS (kaos-lake, dataset layouts): new file, Apache-2.0.
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const catalog = {
@@ -38,16 +38,19 @@ vi.mock('../../lib/kaos/api', async (orig) => ({ ...(await orig()), listTemplate
 import NewDatasetPage from './newDataset';
 
 describe('New dataset', () => {
-    it('offers the built-in and the project layouts, yolo first chosen, and says which were left out', async () => {
+    it('offers no layout (chosen), the built-in and the project layouts, and says which were left out', async () => {
         render(
             <MemoryRouter initialEntries={['/datasets/new']}>
                 <NewDatasetPage />
             </MemoryRouter>,
         );
         expect(await screen.findByText('Samples')).toBeTruthy();
+        expect(screen.getByText('No layout')).toBeTruthy();
         expect(screen.getAllByText('Built-in')).toHaveLength(2);
         expect(screen.getByText('Project')).toBeTruthy();
-        expect(screen.getByText(/Class names/)).toBeTruthy(); // yolo's parameter: the default layout
+        expect(screen.queryByText(/Class names/)).toBeNull(); // no layout chosen: no parameters
+        fireEvent.click(screen.getByText('YOLO (txt annotations)'));
+        expect(screen.getByText(/Class names/)).toBeTruthy(); // yolo picked on purpose
         expect(screen.getByText(/title is required/)).toBeTruthy();
         expect(screen.getByText('kaosctl layout publish')).toBeTruthy();
     });

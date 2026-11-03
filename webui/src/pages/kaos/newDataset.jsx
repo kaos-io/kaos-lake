@@ -1,8 +1,8 @@
 // KAOS (kaos-lake, PRD novelcore/kaos#1283 F-04): new file, Apache-2.0.
 //
-// New dataset: a name (dataset-…), a description, a layout (built-in or the project's own) and its
-// parameters. The dataset is created and its first commit made with the signed-in person's own
-// identity.
+// New dataset: a name (dataset-…), a description, and a layout (none by default, a built-in or the
+// project's own) with its parameters. The dataset is created, and a layout's first commit made, with
+// the signed-in person's own identity.
 import React, { useEffect, useState } from 'react';
 import Badge from 'react-bootstrap/Badge';
 import Button from 'react-bootstrap/Button';
@@ -14,10 +14,18 @@ import InputGroup from 'react-bootstrap/InputGroup';
 import { AlertError, Loading } from '../../lib/components/controls';
 import { Link } from '../../lib/components/nav';
 import { useRouter } from '../../lib/hooks/router';
-import { DATASET_PREFIX, createDataset, listTemplates } from '../../lib/kaos/api';
+import { DATASET_PREFIX, NO_LAYOUT, createDataset, listTemplates } from '../../lib/kaos/api';
 import { datasetHref } from '../../lib/kaos/pipeline';
 
 const NAME_REST = /^[a-z0-9][a-z0-9-]{2,47}$/;
+
+// The default choice: no layout. A layout (yolo, raw, the project's own) is always picked on purpose.
+const NO_LAYOUT_OPTION = {
+    name: NO_LAYOUT,
+    title: 'No layout',
+    description: 'An empty dataset that takes any files. Pick a layout to start with its folders, files and checks.',
+    parameters: [],
+};
 
 export const FieldInput = ({ field, value, onChange }) =>
     field.type === 'list' ? (
@@ -37,7 +45,7 @@ const NewDatasetPage = () => {
     const [error, setError] = useState(null);
     const [rest, setRest] = useState('');
     const [description, setDescription] = useState('');
-    const [template, setTemplate] = useState('yolo');
+    const [template, setTemplate] = useState(NO_LAYOUT);
     const [values, setValues] = useState({});
     const [step, setStep] = useState('');
 
@@ -46,7 +54,8 @@ const NewDatasetPage = () => {
     }, []);
     if (!catalog) return error ? <AlertError error={error} /> : <Loading />;
 
-    const chosen = catalog.templates.find((t) => t.name === template) || catalog.templates[0];
+    const options = [NO_LAYOUT_OPTION, ...catalog.templates];
+    const chosen = options.find((t) => t.name === template) || NO_LAYOUT_OPTION;
     const name = DATASET_PREFIX + rest;
     const nameOk = NAME_REST.test(rest);
     const create = async (e) => {
@@ -71,8 +80,8 @@ const NewDatasetPage = () => {
             </div>
             <h3>New dataset</h3>
             <p className="text-muted">
-                Pick a layout and a name. The dataset is created as you, with the layout&apos;s folders and files; then
-                you add your data and release a version.
+                Pick a name and, if you want one, a layout. The dataset is created as you: empty with no layout, or with
+                the layout&apos;s folders and files. Then you add your data and release a version.
             </p>
             {!catalog.storage_namespace_prefix && (
                 <AlertError error="This lakeFS has no storage for new datasets (kaos.repositories.storage_namespace_prefix)." />
@@ -99,7 +108,7 @@ const NewDatasetPage = () => {
                 </Form.Group>
                 <Form.Label>Layout</Form.Label>
                 <div className="d-flex gap-3 mb-3 flex-wrap">
-                    {catalog.templates.map((t) => (
+                    {options.map((t) => (
                         <Card
                             key={t.name}
                             role="button"
@@ -110,12 +119,14 @@ const NewDatasetPage = () => {
                             <Card.Body>
                                 <Card.Title>
                                     {t.title}{' '}
-                                    <Badge
-                                        bg={t.source === 'project' ? 'info' : 'secondary'}
-                                        className="fs-6 fw-normal"
-                                    >
-                                        {t.source === 'project' ? 'Project' : 'Built-in'}
-                                    </Badge>
+                                    {t.source && (
+                                        <Badge
+                                            bg={t.source === 'project' ? 'info' : 'secondary'}
+                                            className="fs-6 fw-normal"
+                                        >
+                                            {t.source === 'project' ? 'Project' : 'Built-in'}
+                                        </Badge>
+                                    )}
                                 </Card.Title>
                                 <Card.Text className="small text-muted">{t.description}</Card.Text>
                                 <Card.Text className="small text-muted">
