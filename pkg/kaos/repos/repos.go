@@ -207,6 +207,7 @@ func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix, locatio
 			return err
 		}
 		note("labelled %s a dataset: made without a template", r.Name)
+		NoteDataset(r.Name)
 		return nil
 	}); err != nil {
 		return changes, err

@@ -35,6 +35,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/gateway/sig"
 	"github.com/treeverse/lakefs/pkg/graveler/ref"
 	"github.com/treeverse/lakefs/pkg/httputil"
+	"github.com/treeverse/lakefs/pkg/kaos/datasetevents"
 	"github.com/treeverse/lakefs/pkg/kaos/meluxina"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
 	"github.com/treeverse/lakefs/pkg/kaos/sharing"
@@ -209,6 +210,12 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("kaos.sharing")
 		} else if sh != nil {
 			go sh.Run(ctx)
+		}
+
+		// Modified by KAOS: a dataset change re-renders the project's pipelines (PRD
+		// novelcore/kaos#1283 D-05).
+		if _, err := datasetevents.Configure(baseCfg.KAOS.DatasetEvents.Namespace, logger); err != nil {
+			logger.WithError(err).Fatal("kaos.dataset_events")
 		}
 
 		// Modified by KAOS: keep the project's default dataset and each declared app's outputs

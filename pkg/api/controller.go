@@ -2496,6 +2496,7 @@ func (c *Controller) DeleteRepository(w http.ResponseWriter, r *http.Request, re
 	if c.handleAPIError(ctx, w, r, err) {
 		return
 	}
+	repos.NoteDataset(repository) // Modified by KAOS: the dataset leaves the dropdown (D-05).
 	writeResponse(w, r, http.StatusNoContent, nil)
 }
 
@@ -2567,6 +2568,10 @@ func (c *Controller) SetRepositoryMetadata(w http.ResponseWriter, r *http.Reques
 	err := c.Catalog.UpdateRepositoryMetadata(ctx, repository, body.Metadata.AdditionalProperties)
 	if c.handleAPIError(ctx, w, r, err) {
 		return
+	}
+	// Modified by KAOS: a repository labelled a dataset joins the dropdown (PRD novelcore/kaos#1283 D-05).
+	if body.Metadata.AdditionalProperties[repos.KeyKind] == repos.KindDataset {
+		repos.NoteDataset(repository)
 	}
 	// Modified by KAOS: a share reaches the consuming project's group at once (PRD
 	// novelcore/kaos#1283 F-12).
@@ -5474,6 +5479,9 @@ func (c *Controller) CreateTag(w http.ResponseWriter, r *http.Request, body apig
 	if c.handleAPIError(ctx, w, r, err) {
 		return
 	}
+	// Modified by KAOS: a released dataset version reaches the project's pipelines (PRD
+	// novelcore/kaos#1283 D-05).
+	repos.NoteRelease(repository, body.Id)
 	response := apigen.Ref{
 		CommitId: commitID,
 		Id:       body.Id,
@@ -5496,6 +5504,7 @@ func (c *Controller) DeleteTag(w http.ResponseWriter, r *http.Request, repositor
 	if c.handleAPIError(ctx, w, r, err) {
 		return
 	}
+	repos.NoteRelease(repository, tag) // Modified by KAOS: the version leaves the dropdown (D-05).
 	writeResponse(w, r, http.StatusNoContent, nil)
 }
 

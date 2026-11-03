@@ -114,6 +114,19 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `kaos.catalog.namespaces` set, `GET /kaos/v1/catalog` answers the datasets (name, default,
   description, location, main's head, `vN` versions newest first) to pods of those namespaces by
   their service-account token, any account, acting as no user. It never serves data.
+- **Dataset release event** (PRD novelcore/kaos#1283 D-05). With `kaos.dataset_events.namespace` set
+  (the project's CI namespace), a released or deleted `vN` tag on a `dataset-*` repository, a repository
+  labelled `kaos.kind=dataset`, and a deleted `dataset-*` repository make kaos-lake create ONE Workflow
+  there (`ml-ci-dataset-release`, as `dataset-release-sa`), through the Kubernetes API with its own
+  service-account token, which asks each of the project's ML apps to re-read the catalog and re-render
+  its pipeline's `dataset` dropdown. Changes inside a 10 s window are one Workflow; one is also
+  created at start, so a change lost while the server was down is caught up. Every path that creates a
+  tag goes through the API (`kaosctl dataset release`, the UI, the seeder), so the hooks are in the
+  controller (`pkg/api/controller.go`: CreateTag, DeleteTag, DeleteRepository, SetRepositoryMetadata) and
+  in the reconcile pass that labels a hand-made dataset (`pkg/kaos/repos`). A refused or lost event is
+  not an error: the hourly reconcile compares the datasets each pipeline was rendered with against
+  the catalog. Datasets shared by other projects change a consumer's catalog too, but their events stay
+  in the owner's project: the consumer's backstop picks them up. Code: `pkg/kaos/datasetevents`.
 - **Multi-user auth mode** (PRD novelcore/kaos#1217 F-02). `auth.ui_config.rbac: internal` with no
   `auth.api.endpoint` runs the v1.86 key-value auth store (`contrib/auth/acl`) inside the server, in
   lakeFS's own database: users, groups and policies through the standard auth API and UI, evaluated

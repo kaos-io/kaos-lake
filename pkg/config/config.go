@@ -622,6 +622,13 @@ type BaseConfig struct {
 		// Sharing reads the datasets sibling projects share with this one (pkg/kaos/sharing,
 		// PRD novelcore/kaos#1283 F-12). Empty PeersPath: off. Needs TokenIdentity.
 		Sharing KAOSSharing `mapstructure:"sharing"`
+		// DatasetEvents tells the project's ML apps that a dataset changed (pkg/kaos/datasetevents,
+		// PRD novelcore/kaos#1283 D-05). Empty Namespace: off.
+		DatasetEvents struct {
+			// Namespace is the project's CI namespace, where the Workflow that re-renders the
+			// apps' pipelines is created.
+			Namespace string `mapstructure:"namespace"`
+		} `mapstructure:"dataset_events"`
 		// Unknown collects kaos.* keys this build does not know. Config is decoded exactly (an
 		// unknown key is an error), but a newer chart or operator may set a kaos.* key an older
 		// image lacks; that must never stop the server from starting.
