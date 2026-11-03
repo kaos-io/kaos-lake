@@ -7,13 +7,13 @@
 export const pipelineRef = (repoId, version) => `dataset = ${repoId}@${version}`;
 
 /** The CLI command that proposes a folder's files for a dataset (opens a pull request). */
-export const pushCommand = (repoId) => `kubecore dataset push <folder> ${repoId} -m "<message>"`;
+export const pushCommand = (repoId) => `kaosctl dataset push <folder> ${repoId} -m "<message>"`;
 
 /** The CLI command that releases the next version of a dataset. */
-export const releaseCommand = (repoId) => `kubecore dataset release ${repoId}`;
+export const releaseCommand = (repoId) => `kaosctl dataset release ${repoId}`;
 
-/** Where the kubecore CLI is installed from (its README; no pinned version here). */
-export const CLI_README_URL = 'https://github.com/novelcore/hera-pipeline-template/tree/main/packages/kubecore';
+/** Where the kaosctl CLI (kaos-lib) is documented: its command reference (no pinned version here). */
+export const CLI_README_URL = 'https://storage.googleapis.com/kaos-dev-511509-kaos-lib/docs/generated/cli.html';
 
 /** Where a dataset's data is browsed at a version (a tag) or at main. */
 export const browseHref = (repoId, ref = 'main') => ({
