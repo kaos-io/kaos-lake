@@ -39,7 +39,7 @@ const SpaceCard = ({ snapshot }) => {
     return (
         <Card className="mb-3">
             <Card.Body>
-                <Card.Title as="h6">Space on MeluXina</Card.Title>
+                <Card.Title as="h6">Space on the HPC system</Card.Title>
                 <ProgressBar
                     now={pct}
                     variant={
@@ -177,8 +177,8 @@ const MeluxinaTab = () => {
     if (!state.enabled) {
         return (
             <Card body>
-                MeluXina staging is not set up for this project, so there is nothing to show here. Projects that train
-                on MeluXina (the <code>ml_hpc</code> pipelines) get this tab filled in.
+                HPC staging is not set up for this project, so there is nothing to show here. Projects that train
+                on HPC (Slurm) get this tab filled in. Today the HPC provider is MeluXina, Luxembourg's supercomputer.
             </Card>
         );
     }
@@ -186,10 +186,10 @@ const MeluxinaTab = () => {
     if (!snapshot) {
         return (
             <Card body>
-                <p className="mb-1">No snapshot from MeluXina yet.</p>
+                <p className="mb-1">No snapshot from the HPC system yet.</p>
                 <p className="text-muted mb-0">
                     The stager reports what is staged every few minutes. If this stays empty, no pipeline of this
-                    project has run on MeluXina yet; once one does, its datasets show up here.
+                    project has run on HPC yet; once one does, its datasets show up here.
                 </p>
             </Card>
         );
@@ -224,7 +224,7 @@ const MeluxinaTab = () => {
             </div>
             {groups.length === 0 && (
                 <Card body>
-                    <p className="mb-1">Nothing is staged on MeluXina right now.</p>
+                    <p className="mb-1">Nothing is staged on the HPC system right now.</p>
                     <p className="text-muted mb-0">
                         A version is copied there the first time an HPC pipeline run uses it, and stays until the space
                         is needed.

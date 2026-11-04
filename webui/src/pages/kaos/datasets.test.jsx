@@ -23,16 +23,16 @@ const at = (url) =>
     );
 
 describe('Datasets page tabs', () => {
-    it('has no MeluXina tab where lakeFS does not serve the view', () => {
+    it('has no HPC tab where lakeFS does not serve the view', () => {
         uiConfig.meluxina = false;
         at('/datasets?tab=meluxina');
-        expect(screen.queryByText('MeluXina')).toBeNull();
+        expect(screen.queryByText('HPC')).toBeNull();
         expect(screen.queryByText('meluxina view')).toBeNull();
     });
-    it('shows the MeluXina tab on a project that trains on MeluXina', () => {
+    it('shows the HPC tab on a project that trains on HPC', () => {
         uiConfig.meluxina = true;
         at('/datasets?tab=meluxina');
-        expect(screen.getByText('MeluXina')).toBeTruthy();
+        expect(screen.getByText('HPC')).toBeTruthy();
         expect(screen.getByText('meluxina view')).toBeTruthy();
     });
 });

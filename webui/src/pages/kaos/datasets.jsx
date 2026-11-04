@@ -270,7 +270,7 @@ const DatasetList = () => {
 };
 
 const DATASETS_TAB = { key: 'datasets', title: 'Datasets' };
-const MELUXINA_TAB = { key: 'meluxina', title: 'MeluXina' };
+const MELUXINA_TAB = { key: 'meluxina', title: 'HPC' };
 
 const DatasetsPage = () => {
     const [params, setParams] = useSearchParams();
