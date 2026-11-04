@@ -187,3 +187,29 @@ func TestCacheGetSetWithExpiry(t *testing.T) {
 	}
 	slowSpy.ResetCalled()
 }
+
+// KAOS-FORK
+func TestCacheDelete(t *testing.T) {
+	t.Parallel()
+	c := cache.NewCache(10, time.Hour, cache.NewJitterFn(0))
+	calls := 0
+	get := func() int {
+		v, err := c.GetOrSet("k", func() (any, error) {
+			calls++
+			return calls, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.(int)
+	}
+	if get() != 1 || get() != 1 {
+		t.Fatal("value not cached")
+	}
+	c.Delete("k")
+	if got := get(); got != 2 {
+		t.Fatalf("after Delete got %d, want a recompute (2)", got)
+	}
+	c.Delete("absent") // no-op
+	cache.NoCache.Delete("k")
+}

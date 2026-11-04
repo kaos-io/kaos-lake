@@ -1569,3 +1569,93 @@ func TestManager_UpdatePullRequest(t *testing.T) {
 		}), graveler.ErrPullRequestNotFound)
 	})
 }
+
+// KAOS-FORK: a deleted repository must leave the repository cache. The cache here never expires on its
+// own within the test, so only an explicit invalidation can make these pass.
+func testRefManagerLongRepoCache(t testing.TB) graveler.RefManager {
+	t.Helper()
+	kvStore := kvtest.GetStore(t.Context(), t)
+	cacheConfig := ref.CacheConfig{Size: 100, Expiry: time.Hour}
+	cfg := ref.ManagerConfig{
+		Executor:              batch.NopExecutor(),
+		KVStore:               kvStore,
+		KVStoreLimited:        kv.NewStoreLimiter(kvStore, ratelimit.NewUnlimited()),
+		AddressProvider:       ident.NewHexAddressProvider(),
+		RepositoryCacheConfig: cacheConfig,
+		CommitCacheConfig:     cacheConfig,
+	}
+	return ref.NewRefManager(cfg, NewStorageConfigMock(config.SingleBlockstoreID))
+}
+
+func newTestRepository(instanceUID string) graveler.Repository {
+	return graveler.Repository{
+		StorageID:        "sid",
+		StorageNamespace: graveler.StorageNamespace("s3://foo/" + instanceUID),
+		CreationDate:     time.Now(),
+		DefaultBranchID:  "main",
+		InstanceUID:      instanceUID,
+	}
+}
+
+func TestManager_DeleteRepositoryLeavesCache(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	r := testRefManagerLongRepoCache(t)
+	const repoID = graveler.RepositoryID("cached-repo")
+
+	_, err := r.CreateRepository(ctx, repoID, newTestRepository("uid1"))
+	require.NoError(t, err)
+	_, err = r.GetRepository(ctx, repoID) // populates the cache
+	require.NoError(t, err)
+
+	require.NoError(t, r.DeleteRepository(ctx, repoID))
+
+	_, err = r.GetRepository(ctx, repoID)
+	require.ErrorIs(t, err, graveler.ErrRepositoryNotFound)
+}
+
+func TestManager_RecreateRepositoryUsesNewInstance(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	r := testRefManagerLongRepoCache(t)
+	const repoID = graveler.RepositoryID("recreated-repo")
+
+	_, err := r.CreateRepository(ctx, repoID, newTestRepository("uid1"))
+	require.NoError(t, err)
+	old, err := r.GetRepository(ctx, repoID)
+	require.NoError(t, err)
+	require.Equal(t, "uid1", old.InstanceUID)
+
+	require.NoError(t, r.DeleteRepository(ctx, repoID))
+	_, err = r.CreateRepository(ctx, repoID, newTestRepository("uid2"))
+	require.NoError(t, err)
+
+	// What the catalog does: read the (cached) record, then write metadata through it.
+	repo, err := r.GetRepository(ctx, repoID)
+	require.NoError(t, err)
+	require.Equal(t, "uid2", repo.InstanceUID, "the dead instance's record was served")
+	require.Equal(t, repoID.String()+"-uid2", graveler.RepoPartition(repo))
+
+	require.NoError(t, r.SetRepositoryMetadata(ctx, repo, func(m graveler.RepositoryMetadata) (graveler.RepositoryMetadata, error) {
+		m["kaos.kind"] = "dataset"
+		return m, nil
+	}))
+	md, err := r.GetRepositoryMetadata(ctx, repoID)
+	require.NoError(t, err)
+	require.Equal(t, graveler.RepositoryMetadata{"kaos.kind": "dataset"}, md)
+}
+
+func TestManager_CreateRepositoryAfterCachedMiss(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	r := testRefManagerLongRepoCache(t)
+	const repoID = graveler.RepositoryID("fresh-repo")
+
+	_, err := r.GetRepository(ctx, repoID)
+	require.ErrorIs(t, err, graveler.ErrRepositoryNotFound)
+	_, err = r.CreateRepository(ctx, repoID, newTestRepository("uid1"))
+	require.NoError(t, err)
+	repo, err := r.GetRepository(ctx, repoID)
+	require.NoError(t, err)
+	require.Equal(t, "uid1", repo.InstanceUID)
+}

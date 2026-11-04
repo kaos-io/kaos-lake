@@ -192,6 +192,8 @@ func (m *Manager) createBareRepository(ctx context.Context, repositoryID gravele
 	repo := graveler.ProtoFromRepo(repoRecord)
 
 	err := kv.SetMsgIf(ctx, m.kvStore, graveler.RepositoriesPartition(), []byte(graveler.RepoPath(repositoryID)), repo, nil)
+	// KAOS-FORK: drop any cached record (a dead instance's, or a cached miss) so the new one is read.
+	m.repoCache.Delete(repositoryID)
 	if err != nil {
 		if errors.Is(err, kv.ErrPredicateFailed) {
 			err = graveler.ErrNotUnique
@@ -243,7 +245,9 @@ func (m *Manager) ListRepositories(ctx context.Context) (graveler.RepositoryIter
 
 func (m *Manager) updateRepoState(ctx context.Context, repo *graveler.RepositoryRecord, state graveler.RepositoryState) error {
 	repo.State = state
-	return kv.SetMsg(ctx, m.kvStore, graveler.RepositoriesPartition(), []byte(graveler.RepoPath(repo.RepositoryID)), graveler.ProtoFromRepo(repo))
+	err := kv.SetMsg(ctx, m.kvStore, graveler.RepositoriesPartition(), []byte(graveler.RepoPath(repo.RepositoryID)), graveler.ProtoFromRepo(repo))
+	m.repoCache.Delete(repo.RepositoryID) // KAOS-FORK: the cached record has the old state
+	return err
 }
 
 func (m *Manager) deleteRepositoryBranches(ctx context.Context, repository *graveler.RepositoryRecord) error {
@@ -319,7 +323,9 @@ func (m *Manager) deleteRepository(ctx context.Context, repo *graveler.Repositor
 	}
 
 	// Finally delete the repository record itself
-	return m.kvStore.Delete(ctx, []byte(graveler.RepositoriesPartition()), []byte(graveler.RepoPath(repo.RepositoryID)))
+	err := m.kvStore.Delete(ctx, []byte(graveler.RepositoriesPartition()), []byte(graveler.RepoPath(repo.RepositoryID)))
+	m.repoCache.Delete(repo.RepositoryID) // KAOS-FORK: a deleted repository must not be served from the cache
+	return err
 }
 
 func (m *Manager) DeleteRepository(ctx context.Context, repositoryID graveler.RepositoryID, opts ...graveler.SetOptionsFunc) error {
