@@ -20,6 +20,8 @@ type SetFnWithExpiry func() (v any, expiry time.Duration, err error)
 type Cache interface {
 	GetOrSet(k any, setFn SetFn) (v any, err error)
 	GetOrSetWithExpiry(k any, setFn SetFnWithExpiry) (v any, err error)
+	// Delete removes k from the cache; a later GetOrSet recomputes it. // KAOS-FORK
+	Delete(k any)
 }
 
 type GetSetCache struct {
@@ -66,6 +68,11 @@ func (c *GetSetCache) GetOrSetWithExpiry(k any, setFn SetFnWithExpiry) (v any, e
 		c.lru.AddEx(k, v, expiry)
 		return v, nil
 	})
+}
+
+// Delete removes k from the cache. // KAOS-FORK
+func (c *GetSetCache) Delete(k any) {
+	c.lru.Remove(k)
 }
 
 func NewJitterFn(jitter time.Duration) JitterFn {

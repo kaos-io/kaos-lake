@@ -290,3 +290,13 @@ To release, open a pull request that bumps `kaos/VERSION`.
   and a link to the owner's lakeFS; the section is hidden when nothing is shared, and an older
   server (404 or the UI's page) reads as nothing shared. Code: `pkg/kaos/sharing/handlers.go`,
   `webui/src/pages/kaos/sharedWithUs.jsx`.
+- **A deleted repository leaves the repository cache** (release `1.86.0-kaos.28`). lakeFS caches
+  each repository record (`graveler.repository_cache`, 5 s + 2 s jitter) and deleting a repository
+  never invalidated that entry, so for 5-7 s after a delete `GET /repositories/<name>` answered 200
+  with the dead record: recreating the same name failed ("already exists"), and metadata set on the
+  recreated repository went to the dead instance's partition (`<id>-<InstanceUID>`), silently
+  losing its `kaos.*` labels. `cache.Cache` gained `Delete(k)` (LRU `Remove`; no-op for `NoCache`),
+  and `pkg/graveler/ref/manager.go` calls `repoCache.Delete(id)` after every write of the
+  repository record: the move to `IN_DELETION`, the final delete, and creation. In-process only,
+  which is enough for the single replica each project runs; with several replicas the other
+  replicas stay bounded by the 5-7 s TTL. Marked `KAOS-FORK` in `pkg/cache` and `pkg/graveler/ref`.

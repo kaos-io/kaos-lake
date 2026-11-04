@@ -12,3 +12,6 @@ func (m *noCache) GetOrSetWithExpiry(_ any, setFn SetFnWithExpiry) (v any, err e
 	v, _, err = setFn()
 	return v, err
 }
+
+// Delete is a no-op: nothing is cached. // KAOS-FORK
+func (m *noCache) Delete(_ any) {}

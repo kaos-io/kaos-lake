@@ -45,6 +45,11 @@ func (m *mockCache) GetOrSetWithExpiry(k any, setFn cache.SetFnWithExpiry) (v an
 	panic("Not implemented.")
 }
 
+// Delete is part of cache.Cache; the settings tests never invalidate. // KAOS-FORK
+func (m *mockCache) Delete(k any) {
+	delete(m.c, k)
+}
+
 func TestNonExistent(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
