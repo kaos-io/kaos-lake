@@ -20,7 +20,7 @@ type SetFnWithExpiry func() (v any, expiry time.Duration, err error)
 type Cache interface {
 	GetOrSet(k any, setFn SetFn) (v any, err error)
 	GetOrSetWithExpiry(k any, setFn SetFnWithExpiry) (v any, err error)
-	// Delete removes k from the cache; a later GetOrSet recomputes it. // KAOS-FORK
+	// Delete removes k from the cache; a later GetOrSet recomputes it. // Modified by KAOS (repository cache invalidation, kaos.28).
 	Delete(k any)
 }
 
@@ -70,7 +70,7 @@ func (c *GetSetCache) GetOrSetWithExpiry(k any, setFn SetFnWithExpiry) (v any, e
 	})
 }
 
-// Delete removes k from the cache. // KAOS-FORK
+// Delete removes k from the cache. // Modified by KAOS (repository cache invalidation, kaos.28).
 func (c *GetSetCache) Delete(k any) {
 	c.lru.Remove(k)
 }

@@ -1570,7 +1570,7 @@ func TestManager_UpdatePullRequest(t *testing.T) {
 	})
 }
 
-// KAOS-FORK: a deleted repository must leave the repository cache. The cache here never expires on its
+// Modified by KAOS: a deleted repository must leave the repository cache. The cache here never expires on its
 // own within the test, so only an explicit invalidation can make these pass.
 func testRefManagerLongRepoCache(t testing.TB) graveler.RefManager {
 	t.Helper()

@@ -188,7 +188,7 @@ func TestCacheGetSetWithExpiry(t *testing.T) {
 	slowSpy.ResetCalled()
 }
 
-// KAOS-FORK
+// Modified by KAOS (repository cache invalidation, kaos.28).
 func TestCacheDelete(t *testing.T) {
 	t.Parallel()
 	c := cache.NewCache(10, time.Hour, cache.NewJitterFn(0))
