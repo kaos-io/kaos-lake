@@ -7,14 +7,14 @@ import { defaultAPIHeaders, extractError } from '../api';
 /** null or undefined (the snapshot sends null for unknown values). */
 export const isNil = (v) => v === null || v === undefined;
 
-export const MELUXINA_LOCATION = 'Luxembourg (MeluXina)';
+export const MELUXINA_LOCATION = 'HPC (Slurm)';
 /** Free space under this share of the limit raises the space alert (PRD 3.8). */
 export const LOW_SPACE_FRACTION = 0.1;
 /** A snapshot older than this is stale (PRD 3.8). */
 export const STALE_AFTER_MS = 30 * 60 * 1000;
 
 export const RETENTION_RULE =
-    'Versions stay on MeluXina until new data needs the space. The least recently used version goes first. ' +
+    'Versions stay on the HPC system until new data needs the space. The least recently used version goes first. ' +
     'A version that a queued or running job needs is never removed.';
 
 /**
@@ -97,11 +97,11 @@ export const alertsFor = (snapshot, nowMs) => {
     // Staleness is about the last good data, not the last attempt: a failed run is not fresh data.
     const good = Date.parse(snapshot.last_success_at || '');
     if (Number.isNaN(good)) {
-        alerts.push({ id: 'stale', text: 'No successful snapshot yet, so nothing below is known to be on MeluXina.' });
+        alerts.push({ id: 'stale', text: 'No successful snapshot yet, so nothing below is known to be on the HPC system.' });
     } else if (nowMs - good > STALE_AFTER_MS) {
         alerts.push({
             id: 'stale',
-            text: `This snapshot is stale: the last good data is from ${relativeTime(snapshot.last_success_at, nowMs)}. The stager reports every few minutes, so what is shown may no longer be on MeluXina.`,
+            text: `This snapshot is stale: the last good data is from ${relativeTime(snapshot.last_success_at, nowMs)}. The stager reports every few minutes, so what is shown may no longer be on the HPC system.`,
         });
     }
     if (snapshot.last_error) alerts.push({ id: 'error', text: `Last staging error: ${snapshot.last_error}` });
