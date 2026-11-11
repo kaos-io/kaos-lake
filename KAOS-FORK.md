@@ -262,6 +262,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
   without it is refused with 400, naming the field, so two runs cannot be mixed by a client that
   leaves it out. The first promotion into a fresh dataset names `main`'s initial commit. Merges
   into other branches, into datasets people upload and into outputs repositories are unchanged.
+  When `main` of a produced dataset holds uncommitted objects (possible only after an admin
+  removed its protection), a merge into it is refused with 400 saying that it holds uncommitted
+  objects no run wrote and that an admin must reset it, instead of lakeFS's bare "dirty branch".
   A pull request carries no expected head, so merging one into `main` of a produced dataset is
   refused with 400 and the pull request stays open; pull requests elsewhere merge as before. Only the Go API code
   (`pkg/api/apigen`) is regenerated; the bundled SDK clients (`clients/`) are upstream's and do not
@@ -368,8 +371,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
     rule of a produced dataset's `main` leaves the app, which already holds its rights, able to
     upload straight to `main` and to commit there until the next app-users pass takes the rights
     back and the next repositories pass restores the rule (one interval each). Objects uploaded to
-    `main` and not committed then make every promotion fail (lakeFS refuses to merge into a branch
-    with uncommitted changes); only an admin can reset `main`.
+    `main` and not committed then make every promotion fail (the merge answers 400 saying so, see
+    "A merge may name the head it expects"); only an admin can reset `main`.
   - *People.* The repositories reconcile keeps the policy `KAOSProducedDatasets` listing every
     repository labelled `kaos.producer` and attached to SuperUsers, Developers and Viewers. On
     those repositories it denies writing and deleting objects, every branch change (create,

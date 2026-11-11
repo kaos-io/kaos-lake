@@ -260,3 +260,35 @@ func TestController_MergePullRequestIntoProducedDatasetRefused(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, pr.StatusCode(), string(pr.Body))
 }
+
+// A produced dataset's main that holds uncommitted objects takes no promotion (lakeFS refuses to
+// merge into a dirty branch). No run stages on main, so the refusal says what it is and who can
+// clear it, instead of the bare "dirty branch" other repositories get.
+func TestController_MergeIntoDirtyProducedMainSaysWhy(t *testing.T) {
+	clt, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	const produced, uploaded = "dataset-clean", "dataset-cars"
+	for _, repo := range []string{produced, uploaded} {
+		_, err := deps.catalog.CreateRepository(ctx, repo, config.SingleBlockstoreID, onBlock(deps, repo), "main", false)
+		require.NoError(t, err)
+		runBranch(t, deps, repo, "run-a")
+		require.NoError(t, deps.catalog.CreateEntry(ctx, repo, "main", catalog.DBEntry{
+			Path: "stray.jpg", PhysicalAddress: "stray-addr", CreationDate: time.Now(), Size: 1, Checksum: "stray",
+		}))
+	}
+	require.NoError(t, deps.catalog.UpdateRepositoryMetadata(ctx, produced, map[string]string{"kaos.kind": "dataset", "kaos.producer": "yolo"}))
+
+	head := mainHead(t, deps, produced)
+	resp, err := clt.MergeIntoBranchWithResponse(ctx, produced, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{ExpectedHead: &head})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode(), string(resp.Body))
+	require.Contains(t, resp.JSON400.Message, "main of dataset-clean, a dataset produced by yolo, holds uncommitted objects that no run wrote")
+	require.Contains(t, resp.JSON400.Message, "an admin must reset main")
+	require.Equal(t, head, mainHead(t, deps, produced))
+
+	// A dataset people upload keeps lakeFS's own answer.
+	resp, err = clt.MergeIntoBranchWithResponse(ctx, uploaded, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	require.Equal(t, graveler.ErrDirtyBranch.Error(), resp.JSON400.Message)
+}

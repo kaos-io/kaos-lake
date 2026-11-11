@@ -5431,6 +5431,16 @@ func (c *Controller) MergeIntoBranch(w http.ResponseWriter, r *http.Request, bod
 		writeError(w, r, http.StatusPreconditionFailed, err)
 		return
 	}
+	// Modified by KAOS: no run stages on main of a dataset a pipeline produces, so uncommitted
+	// objects there are nobody's to commit; say so, and who can clear them.
+	if errors.Is(err, graveler.ErrDirtyBranch) {
+		if labels, mdErr := c.Catalog.GetRepositoryMetadata(ctx, repository); mdErr == nil && repos.MergeNeedsExpectedHead(labels, destinationBranch) {
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+				"%s of %s, a dataset produced by %s, holds uncommitted objects that no run wrote, so nothing can be merged into it: an admin must reset %s",
+				destinationBranch, repository, labels[repos.KeyProducer], destinationBranch))
+			return
+		}
+	}
 	if c.handleAPIError(ctx, w, r, err) {
 		return
 	}
