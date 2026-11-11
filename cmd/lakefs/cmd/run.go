@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"text/template"
 	"time"
@@ -129,6 +130,7 @@ var runCmd = &cobra.Command{
 		// run in, are the declared ones.
 		var exchangeTTL time.Duration
 		declaredApps := &declared.Loaded{}
+		var producedCatalog atomic.Pointer[catalog.Catalog]
 		if workload := baseCfg.KAOS.WorkloadIdentity; workload.Audience != "" {
 			if baseCfg.KAOS.AppUsers.Path == "" {
 				logger.Fatal("kaos.workload_identity needs kaos.app_users.path")
@@ -146,7 +148,20 @@ var runCmd = &cobra.Command{
 				logger.Fatal(`kaos.app_users.path needs auth.ui_config.rbac "internal"`)
 			}
 			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, exchangeTTL, declaredApps, logger,
-				declared.WithLegacyRepository(baseCfg.KAOS.Repositories.LegacyRepository))
+				declared.WithLegacyRepository(baseCfg.KAOS.Repositories.LegacyRepository),
+				// An app writes a dataset it declares only once it exists as its own with main
+				// protected (PRD novelcore/kaos#1911 CON-02, CON-03). The catalog starts below.
+				declared.WithProducedDatasets(func(ctx context.Context, dataset, app string) bool {
+					c := producedCatalog.Load()
+					if c == nil {
+						return false
+					}
+					ready, err := repos.ProducedBy(ctx, c, dataset, app)
+					if err != nil {
+						logger.WithError(err).WithField("dataset", dataset).Warn("Produced dataset not readable: its app only reads it")
+					}
+					return ready
+				}))
 		}
 		// Modified by KAOS: identity-provider tokens as bearer tokens (F-03).
 		if tokenIdentity := baseCfg.KAOS.TokenIdentity; tokenIdentity.Issuer != "" {
@@ -199,6 +214,7 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("failed to create catalog")
 		}
 		defer func() { _ = c.Close() }()
+		producedCatalog.Store(c)
 
 		// Modified by KAOS: keep the latest MeluXina staging snapshot across restarts (PRD
 		// novelcore/kaos#1283 F-10).
