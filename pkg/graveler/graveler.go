@@ -744,7 +744,21 @@ type VersionController interface {
 	// ResetPrefix throws all staged data starting with the given prefix on the repository / branch
 	ResetPrefix(ctx context.Context, repository *RepositoryRecord, branchID BranchID, key Key, opts ...SetOptionsFunc) error
 
-	// Revert creates a reverse patch to the commit given as 'ref', and applies it as a new commit on the given branch.
+	// refuseCommitToProtected returns ErrCommitToProtectedBranch when branchID is protected from
+// commits. Modified by KAOS: Commit alone asked; a revert, a cherry-pick and an import put a new
+// commit at the branch's head just as well, so each asks first (PRD novelcore/kaos#1911 CON-03).
+func (g *Graveler) refuseCommitToProtected(ctx context.Context, repository *RepositoryRecord, branchID BranchID) error {
+	isProtected, err := g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, BranchProtectionBlockedAction_COMMIT)
+	if err != nil {
+		return err
+	}
+	if isProtected {
+		return ErrCommitToProtectedBranch
+	}
+	return nil
+}
+
+// Revert creates a reverse patch to the commit given as 'ref', and applies it as a new commit on the given branch.
 	Revert(ctx context.Context, repository *RepositoryRecord, branchID BranchID, ref Ref, parentNumber int, commitParams CommitParams, commitOverrides *CommitOverrides, opts ...SetOptionsFunc) (CommitID, error)
 
 	// CherryPick creates a patch to the commit given as 'ref', and applies it as a new commit on the given branch.
@@ -2826,20 +2840,6 @@ type CommitIDAndSummary struct {
 // To revert C2, we merge C1 into the branch, with C2 as the merge base.
 // That is, try to apply the diff from C2 to C1 on the tip of the branch.
 // If the commit is a merge commit, 'parentNumber' is the parent number (1-based) relative to which the revert is done.
-// refuseCommitToProtected returns ErrCommitToProtectedBranch when branchID is protected from
-// commits. Modified by KAOS: Commit alone asked; a revert, a cherry-pick and an import put a new
-// commit at the branch's head just as well, so each asks first (PRD novelcore/kaos#1911 CON-03).
-func (g *Graveler) refuseCommitToProtected(ctx context.Context, repository *RepositoryRecord, branchID BranchID) error {
-	isProtected, err := g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, BranchProtectionBlockedAction_COMMIT)
-	if err != nil {
-		return err
-	}
-	if isProtected {
-		return ErrCommitToProtectedBranch
-	}
-	return nil
-}
-
 func (g *Graveler) Revert(ctx context.Context, repository *RepositoryRecord, branchID BranchID, ref Ref, parentNumber int, commitParams CommitParams, commitOverrides *CommitOverrides, opts ...SetOptionsFunc) (CommitID, error) {
 	if err := g.refuseCommitToProtected(ctx, repository, branchID); err != nil {
 		return "", err
