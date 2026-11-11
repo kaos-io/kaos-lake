@@ -744,21 +744,7 @@ type VersionController interface {
 	// ResetPrefix throws all staged data starting with the given prefix on the repository / branch
 	ResetPrefix(ctx context.Context, repository *RepositoryRecord, branchID BranchID, key Key, opts ...SetOptionsFunc) error
 
-	// refuseCommitToProtected returns ErrCommitToProtectedBranch when branchID is protected from
-// commits. Modified by KAOS: Commit alone asked; a revert, a cherry-pick and an import put a new
-// commit at the branch's head just as well, so each asks first (PRD novelcore/kaos#1911 CON-03).
-func (g *Graveler) refuseCommitToProtected(ctx context.Context, repository *RepositoryRecord, branchID BranchID) error {
-	isProtected, err := g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, BranchProtectionBlockedAction_COMMIT)
-	if err != nil {
-		return err
-	}
-	if isProtected {
-		return ErrCommitToProtectedBranch
-	}
-	return nil
-}
-
-// Revert creates a reverse patch to the commit given as 'ref', and applies it as a new commit on the given branch.
+	// Revert creates a reverse patch to the commit given as 'ref', and applies it as a new commit on the given branch.
 	Revert(ctx context.Context, repository *RepositoryRecord, branchID BranchID, ref Ref, parentNumber int, commitParams CommitParams, commitOverrides *CommitOverrides, opts ...SetOptionsFunc) (CommitID, error)
 
 	// CherryPick creates a patch to the commit given as 'ref', and applies it as a new commit on the given branch.
@@ -2832,6 +2818,20 @@ func (g *Graveler) ResetPrefix(ctx context.Context, repository *RepositoryRecord
 type CommitIDAndSummary struct {
 	ID      CommitID
 	Summary DiffSummary
+}
+
+// refuseCommitToProtected returns ErrCommitToProtectedBranch when branchID is protected from
+// commits. Modified by KAOS: Commit alone asked; a revert, a cherry-pick and an import put a new
+// commit at the branch's head just as well, so each asks first (PRD novelcore/kaos#1911 CON-03).
+func (g *Graveler) refuseCommitToProtected(ctx context.Context, repository *RepositoryRecord, branchID BranchID) error {
+	isProtected, err := g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, BranchProtectionBlockedAction_COMMIT)
+	if err != nil {
+		return err
+	}
+	if isProtected {
+		return ErrCommitToProtectedBranch
+	}
+	return nil
 }
 
 // Revert creates a reverse patch to the commit given as 'ref', and applies it as a new commit on the given branch.
