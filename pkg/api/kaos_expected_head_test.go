@@ -162,3 +162,45 @@ func TestController_MergeExpectedHead_TwoRace(t *testing.T) {
 	_, err = deps.catalog.GetEntry(ctx, repo, "main", runs[lost]+".txt", catalog.GetEntryParams{})
 	require.ErrorIs(t, err, graveler.ErrNotFound, "the two runs are not mixed")
 }
+
+// PRD novelcore/kaos#1911 CON-03: main of a dataset a pipeline produces takes a merge only with
+// the head it expects, so no caller can mix two runs by leaving the field out. The first promotion
+// names the initial commit. Other branches and other repositories merge as before.
+func TestController_MergeIntoProducedDatasetNeedsExpectedHead(t *testing.T) {
+	clt, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	const produced, uploaded = "dataset-clean", "dataset-cars"
+	for _, repo := range []string{produced, uploaded} {
+		_, err := deps.catalog.CreateRepository(ctx, repo, config.SingleBlockstoreID, onBlock(deps, repo), "main", false)
+		require.NoError(t, err)
+		runBranch(t, deps, repo, "run-a")
+		runBranch(t, deps, repo, "run-b")
+	}
+	// The labels the repositories reconcile sets; the API refuses kaos.producer to every caller.
+	require.NoError(t, deps.catalog.UpdateRepositoryMetadata(ctx, produced, map[string]string{"kaos.kind": "dataset", "kaos.producer": "yolo"}))
+	require.NoError(t, deps.catalog.UpdateRepositoryMetadata(ctx, uploaded, map[string]string{"kaos.kind": "dataset"}))
+	merge := func(repo, source, dest string, body apigen.MergeIntoBranchJSONRequestBody) *apigen.MergeIntoBranchResponse {
+		resp, err := clt.MergeIntoBranchWithResponse(ctx, repo, source, dest, body)
+		require.NoError(t, err)
+		return resp
+	}
+	fresh := mainHead(t, deps, produced) // the initial commit: a fresh dataset's main has a head too
+
+	for name, body := range map[string]apigen.MergeIntoBranchJSONRequestBody{
+		"no field": {}, "empty": {ExpectedHead: apiutil.Ptr("")},
+	} {
+		resp := merge(produced, "run-a", "main", body)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode(), name)
+		require.Contains(t, resp.JSON400.Message, "expected_head", name)
+		require.Equal(t, fresh, mainHead(t, deps, produced), name)
+	}
+
+	resp := merge(produced, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{ExpectedHead: &fresh})
+	require.Equal(t, http.StatusOK, resp.StatusCode(), string(resp.Body))
+	resp = merge(produced, "run-b", "main", apigen.MergeIntoBranchJSONRequestBody{ExpectedHead: &fresh})
+	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode(), "a stale head")
+
+	// Elsewhere nothing changed: another branch of the produced dataset, and a dataset people upload.
+	require.Equal(t, http.StatusOK, merge(produced, "main", "run-b", apigen.MergeIntoBranchJSONRequestBody{}).StatusCode())
+	require.Equal(t, http.StatusOK, merge(uploaded, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{}).StatusCode())
+}

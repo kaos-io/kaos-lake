@@ -22,6 +22,14 @@ var protectedActions = []graveler.BranchProtectionBlockedAction{
 	graveler.BranchProtectionBlockedAction_COMMIT,
 }
 
+// MergeNeedsExpectedHead reports whether a merge into branch of a repository labelled md must name
+// the head it expects (PRD novelcore/kaos#1911 CON-03): main of a dataset a pipeline produces.
+// Each promotion replaces main's content with one run's, and a merge keeps what only the
+// destination has, so a promotion staged from an older head would mix two runs.
+func MergeNeedsExpectedHead(md graveler.RepositoryMetadata, branch string) bool {
+	return md[KeyProducer] != "" && branch == protectedBranch
+}
+
 // ProtectionCatalog is what ReconcileProtection needs of the lakeFS catalog.
 type ProtectionCatalog interface {
 	GetBranchProtectionRules(ctx context.Context, repositoryID string) (*graveler.BranchProtectionRules, *string, error)

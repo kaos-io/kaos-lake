@@ -5384,6 +5384,21 @@ func (c *Controller) MergeIntoBranch(w http.ResponseWriter, r *http.Request, bod
 		metadata = body.Metadata.AdditionalProperties
 	}
 
+	// Modified by KAOS: main of a dataset a pipeline produces takes a merge only with the head it
+	// expects, whoever the caller is (PRD novelcore/kaos#1911 CON-03).
+	if swag.StringValue(body.ExpectedHead) == "" {
+		labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
+		if c.handleAPIError(ctx, w, r, err) {
+			return
+		}
+		if repos.MergeNeedsExpectedHead(labels, destinationBranch) {
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+				"expected_head is required to merge into %s of %s, a dataset produced by %s: send the commit ID %s is at",
+				destinationBranch, repository, labels[repos.KeyProducer], destinationBranch))
+			return
+		}
+	}
+
 	reference, err := c.Catalog.Merge(ctx,
 		repository, destinationBranch, sourceRef,
 		user.Committer(),

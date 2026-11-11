@@ -256,7 +256,12 @@ To release, open a pull request that bumps `kaos/VERSION`.
   other is retried by the core against the moved branch and refused there. A refusal changes
   nothing and answers 412 with a message naming the destination's current head, so the caller can
   restage from it. A branch name or a short ID is never a head: 412. Without the field, or with an
-  empty one, a merge behaves as upstream. Pull-request merges do not carry it. Only the Go API code
+  empty one, a merge behaves as upstream, except into `main` of a dataset a pipeline produces (a
+  repository labelled `kaos.producer`): there the field is required for every caller, and a merge
+  without it is refused with 400, naming the field, so two runs cannot be mixed by a client that
+  leaves it out. The first promotion into a fresh dataset names `main`'s initial commit. Merges
+  into other branches, into datasets people upload and into outputs repositories are unchanged.
+  Pull-request merges do not carry it. Only the Go API code
   (`pkg/api/apigen`) is regenerated; the bundled SDK clients (`clients/`) are upstream's and do not
   know the field. Code: `api/swagger.yml`, `pkg/api/controller.go` (MergeIntoBranch),
   `pkg/graveler/graveler.go` (`WithExpectedHead`).
