@@ -5393,12 +5393,19 @@ func (c *Controller) MergeIntoBranch(w http.ResponseWriter, r *http.Request, bod
 		graveler.WithForce(swag.BoolValue(body.Force)),
 		graveler.WithAllowEmpty(swag.BoolValue(body.AllowEmpty)),
 		graveler.WithSquashMerge(swag.BoolValue(body.SquashMerge)),
+		// Modified by KAOS: a promotion refuses a destination that moved (PRD novelcore/kaos#1911 D-05).
+		graveler.WithExpectedHead(graveler.CommitID(swag.StringValue(body.ExpectedHead))),
 	)
 
 	if errors.Is(err, graveler.ErrConflictFound) {
 		writeResponse(w, r, http.StatusConflict, apigen.MergeResult{
 			Reference: reference,
 		})
+		return
+	}
+	// Modified by KAOS: the refusal says where the destination is, so the caller can restage from it.
+	if body.ExpectedHead != nil && errors.Is(err, graveler.ErrPreconditionFailed) {
+		writeError(w, r, http.StatusPreconditionFailed, err)
 		return
 	}
 	if c.handleAPIError(ctx, w, r, err) {

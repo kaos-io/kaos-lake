@@ -246,6 +246,18 @@ To release, open a pull request that bumps `kaos/VERSION`.
   stays protected. Outputs repositories are not protected. Editors (Developers) lack
   `branches:SetBranchProtectionRules`, so only Admins change rules. Between a dataset's label and the
   next pass main is open for up to one interval. Code: `pkg/kaos/repos/protect.go`.
+- **A merge may name the head it expects** (PRD novelcore/kaos#1911 F-12, D-05, CON-03).
+  `POST /repositories/{repository}/refs/{sourceRef}/merge/{destinationBranch}` takes an optional
+  `expected_head`: the full ID of the commit the destination branch must be at. The comparison is
+  made inside the branch's conditional update (`graveler.Merge`, on the branch record the write is
+  conditional on), so of two merges racing with the same expected head exactly one lands; the
+  other is retried by the core against the moved branch and refused there. A refusal changes
+  nothing and answers 412 with a message naming the destination's current head, so the caller can
+  restage from it. A branch name or a short ID is never a head: 412. Without the field, or with an
+  empty one, a merge behaves as upstream. Pull-request merges do not carry it. Only the Go API code
+  (`pkg/api/apigen`) is regenerated; the bundled SDK clients (`clients/`) are upstream's and do not
+  know the field. Code: `api/swagger.yml`, `pkg/api/controller.go` (MergeIntoBranch),
+  `pkg/graveler/graveler.go` (`WithExpectedHead`).
 - **Templates are optional: a `dataset-*` repository made by hand is a dataset** (PRD
   novelcore/kaos#1283, owner 2026-11-01). The repositories reconcile labels `kaos.kind=dataset` on
   any validly named `dataset-*` repository without a kind, made with lakeFS's own Create repository,

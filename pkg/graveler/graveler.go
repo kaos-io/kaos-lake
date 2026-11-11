@@ -229,6 +229,9 @@ type (
 		// SquashMerge causes merge commits to be "squashed", losing parent
 		// information about the merged-from branch.
 		SquashMerge bool
+		// Modified by KAOS: ExpectedHead, when set, is the commit a merge's destination branch
+		// must still be at when the branch is updated (PRD novelcore/kaos#1911 D-05).
+		ExpectedHead CommitID
 		// NoTombstone will try to remove entry without setting a tombstone in KV
 		NoTombstone bool
 		// Condition is a function that validates the current value before performing the Set.
@@ -271,6 +274,12 @@ func WithHidden(v bool) SetOptionsFunc {
 func WithSquashMerge(v bool) SetOptionsFunc {
 	return func(opts *SetOptions) {
 		opts.SquashMerge = v
+	}
+}
+
+func WithExpectedHead(v CommitID) SetOptionsFunc {
+	return func(opts *SetOptions) {
+		opts.ExpectedHead = v
 	}
 }
 
@@ -3146,6 +3155,11 @@ func (g *Graveler) Merge(ctx context.Context, repository *RepositoryRecord, dest
 	// or some other branch changing operation. If commit is in-progress, then staging area wasn't empty after we checked so not retrying is ok.
 	// If another commit/merge succeeded, then the user should decide whether to retry the merge.
 	err = g.retryBranchUpdate(ctx, repository, destination, func(branch *Branch) (*Branch, error) {
+		// Modified by KAOS: compared with the branch record this update is conditional on, so a
+		// merge that lost the race to another is refused on its retry, never applied on top.
+		if options.ExpectedHead != "" && branch.CommitID != options.ExpectedHead {
+			return nil, fmt.Errorf("%w: %s is at %s, not at the expected %s", ErrPreconditionFailed, destination, branch.CommitID, options.ExpectedHead)
+		}
 		empty, err := g.isSealedEmpty(ctx, repository, branch)
 		if err != nil {
 			return nil, fmt.Errorf("check if staging empty: %w", err)
