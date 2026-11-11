@@ -116,7 +116,7 @@ func versions(ctx context.Context, c Catalog, repo string) ([]Version, error) {
 			switch {
 			case repos.VersionTag.MatchString(t.ID):
 				numbered = append(numbered, Version{Tag: t.ID, Commit: t.CommitID})
-			case !strings.HasPrefix(t.ID, repos.KeptTagPrefix):
+			case repos.VersionName(t.ID):
 				named = append(named, Version{Tag: t.ID, Commit: t.CommitID})
 			}
 		}

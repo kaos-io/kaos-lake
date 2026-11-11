@@ -4,6 +4,7 @@ package repos
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/treeverse/lakefs/pkg/kaos/datasetevents"
 )
@@ -15,12 +16,18 @@ var VersionTag = regexp.MustCompile(`^v(\d+)$`)
 // novelcore/kaos#1911 D-04): k-<run>. They pin a commit and name no version.
 const KeptTagPrefix = "k-"
 
-// ReleaseTag reports whether tag, created or deleted on repo, changes a dataset's versions: a `vN`
-// tag on a dataset-* repository. Whether the repository is also labelled a dataset is not asked:
+// VersionName reports whether tag names a version of a dataset: a release (vN) or any other name
+// (PRD novelcore/kaos#1911 D-03), never the k-* tag of a kept run.
+func VersionName(tag string) bool {
+	return !strings.HasPrefix(tag, KeptTagPrefix)
+}
+
+// ReleaseTag reports whether tag, created or deleted on repo, changes a dataset's versions: a
+// version name (VersionName) on a dataset-* repository. Whether the repository is also labelled a dataset is not asked:
 // a version is often released before the label (it is set after the first commit, or by the
 // reconcile pass), and the label is itself a change (NoteDataset).
 func ReleaseTag(repo, tag string) bool {
-	return ValidName(repo, DatasetPrefix) && VersionTag.MatchString(tag)
+	return ValidName(repo, DatasetPrefix) && VersionName(tag)
 }
 
 // NoteRelease tells the project's ML apps that a version of repo was released or deleted, when it

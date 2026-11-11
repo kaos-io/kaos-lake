@@ -116,7 +116,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
   as a named version, never the `k-*` tags of kept runs, PRD novelcore/kaos#1911 D-03) to pods of those namespaces by
   their service-account token, any account, acting as no user. It never serves data.
 - **Dataset release event** (PRD novelcore/kaos#1283 D-05). With `kaos.dataset_events.namespace` set
-  (the project's CI namespace), a released or deleted `vN` tag on a `dataset-*` repository, a repository
+  (the project's CI namespace), a created or deleted version tag on a `dataset-*` repository (`vN`, or
+  any other name since PRD novelcore/kaos#1911 D-03; never a kept run's `k-*`), a repository
   labelled `kaos.kind=dataset`, and a deleted `dataset-*` repository make kaos-lake create ONE Workflow
   there (`ml-ci-dataset-release`, as `dataset-release-sa`), through the Kubernetes API with its own
   service-account token, which asks each of the project's ML apps to re-read the catalog and re-render
