@@ -2826,7 +2826,24 @@ type CommitIDAndSummary struct {
 // To revert C2, we merge C1 into the branch, with C2 as the merge base.
 // That is, try to apply the diff from C2 to C1 on the tip of the branch.
 // If the commit is a merge commit, 'parentNumber' is the parent number (1-based) relative to which the revert is done.
+// refuseCommitToProtected returns ErrCommitToProtectedBranch when branchID is protected from
+// commits. Modified by KAOS: Commit alone asked; a revert, a cherry-pick and an import put a new
+// commit at the branch's head just as well, so each asks first (PRD novelcore/kaos#1911 CON-03).
+func (g *Graveler) refuseCommitToProtected(ctx context.Context, repository *RepositoryRecord, branchID BranchID) error {
+	isProtected, err := g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, BranchProtectionBlockedAction_COMMIT)
+	if err != nil {
+		return err
+	}
+	if isProtected {
+		return ErrCommitToProtectedBranch
+	}
+	return nil
+}
+
 func (g *Graveler) Revert(ctx context.Context, repository *RepositoryRecord, branchID BranchID, ref Ref, parentNumber int, commitParams CommitParams, commitOverrides *CommitOverrides, opts ...SetOptionsFunc) (CommitID, error) {
+	if err := g.refuseCommitToProtected(ctx, repository, branchID); err != nil {
+		return "", err
+	}
 	options := NewSetOptions(opts)
 	if repository.ReadOnly && !options.Force {
 		return "", ErrReadOnlyRepository
@@ -2959,6 +2976,9 @@ func (g *Graveler) Revert(ctx context.Context, repository *RepositoryRecord, bra
 // CherryPick creates a new commit on the given branch, with the changes from the given commit.
 // If the commit is a merge commit, 'parentNumber' is the parent number (1-based) relative to which the cherry-pick is done.
 func (g *Graveler) CherryPick(ctx context.Context, repository *RepositoryRecord, branchID BranchID, ref Ref, parentNumber *int, committer string, commitOverrides *CommitOverrides, opts ...SetOptionsFunc) (CommitID, error) {
+	if err := g.refuseCommitToProtected(ctx, repository, branchID); err != nil {
+		return "", err
+	}
 	options := NewSetOptions(opts)
 	if repository.ReadOnly && !options.Force {
 		return "", ErrReadOnlyRepository
@@ -3284,6 +3304,9 @@ func (g *Graveler) retryRepoMetadataUpdate(ctx context.Context, repository *Repo
 }
 
 func (g *Graveler) Import(ctx context.Context, repository *RepositoryRecord, destination BranchID, source MetaRangeID, commitParams CommitParams, prefixes []Prefix, opts ...SetOptionsFunc) (CommitID, error) {
+	if err := g.refuseCommitToProtected(ctx, repository, destination); err != nil {
+		return "", err
+	}
 	options := NewSetOptions(opts)
 	if repository.ReadOnly && !options.Force {
 		return "", ErrReadOnlyRepository

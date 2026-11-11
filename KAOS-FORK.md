@@ -290,6 +290,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
   and a link to the owner's lakeFS; the section is hidden when nothing is shared, and an older
   server (404 or the UI's page) reads as nothing shared. Code: `pkg/kaos/sharing/handlers.go`,
   `webui/src/pages/kaos/sharedWithUs.jsx`.
+- **A branch protected from commits refuses every commit** (PRD novelcore/kaos#1911 CON-03).
+  Upstream asks the branch protection rule `commit` only on a direct commit and a hard reset. A
+  revert, a cherry-pick and an import each put a new commit at the branch's head as well, so
+  `graveler.Revert`, `graveler.CherryPick` and `graveler.Import` now ask the same rule first and
+  answer the same error (`cannot commit to protected branch`, 403), in every repository. With the
+  rule KAOS sets on a dataset's `main`, that branch moves only by a merge (a pull request's or a
+  promotion's); reverting a dataset's `main` is done on a branch and merged. Code:
+  `pkg/graveler/graveler.go` (`refuseCommitToProtected`).
 - **A deleted repository leaves the repository cache** (release `1.86.0-kaos.28`). lakeFS caches
   each repository record (`graveler.repository_cache`, 5 s + 2 s jitter) and deleting a repository
   never invalidated that entry, so for 5-7 s after a delete `GET /repositories/<name>` answered 200
