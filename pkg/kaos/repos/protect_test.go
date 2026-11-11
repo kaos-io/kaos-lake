@@ -144,3 +144,33 @@ func TestReconcileProtection_KeepsOtherRules(t *testing.T) {
 		graveler.BranchProtectionBlockedAction_COMMIT, graveler.BranchProtectionBlockedAction_STAGING_WRITE,
 	}, rules.BranchPatternToBlockedActions["main"].Value)
 }
+
+// PRD novelcore/kaos#1911 D-04, AC-07: a dataset an app produces is protected from the pass that
+// creates it. Its producer may commit on main by policy (that is the merge), but the core refuses a
+// direct write or commit there: main moves only when a run-* branch is merged.
+func TestProducedDataset_MainMovesOnlyByMerge(t *testing.T) {
+	ctx := t.Context()
+	c := realCatalog(t)
+	want := repos.Desired("", nil, map[string]string{"dataset-clean": "yolo"})
+	_, err := repos.Reconcile(ctx, c, "", "mem://lake", "", want)
+	require.NoError(t, err)
+	_, err = repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, err)
+	md, err := c.GetRepositoryMetadata(ctx, "dataset-clean")
+	require.NoError(t, err)
+	require.Equal(t, "yolo", md[repos.KeyProducer])
+
+	require.ErrorIs(t, addFile(t, c, "dataset-clean", "main", "direct.txt"), graveler.ErrWriteToProtectedBranch)
+	_, err = c.Commit(ctx, "dataset-clean", "main", "direct", "kaos-app-yolo", nil, nil, nil, true)
+	require.ErrorIs(t, err, graveler.ErrCommitToProtectedBranch)
+
+	_, err = c.CreateBranch(ctx, "dataset-clean", "run-7f3a", "main")
+	require.NoError(t, err)
+	require.NoError(t, addFile(t, c, "dataset-clean", "run-7f3a", "images/1.jpg"))
+	_, err = c.Commit(ctx, "dataset-clean", "run-7f3a", "run 7f3a", "kaos-app-yolo", nil, nil, nil, false)
+	require.NoError(t, err)
+	_, err = c.Merge(ctx, "dataset-clean", "main", "run-7f3a", "kaos-app-yolo", "promote run 7f3a", nil, "")
+	require.NoError(t, err)
+	_, err = c.GetEntry(ctx, "dataset-clean", "main", "images/1.jpg", catalog.GetEntryParams{})
+	require.NoError(t, err)
+}

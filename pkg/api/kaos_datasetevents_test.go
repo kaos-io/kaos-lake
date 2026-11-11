@@ -50,8 +50,9 @@ func TestController_DatasetEvents(t *testing.T) {
 	}
 
 	tag("plain-repo", "v1")
-	tag("dataset-cars", "snapshot")
-	expect(0, "a non-dataset repository, and a tag that is not vN, trigger nothing")
+	tag("plain-repo", "snapshot")
+	tag("dataset-cars", "k-7f3a")
+	expect(0, "a non-dataset repository, and a kept run's k-* tag, trigger nothing")
 
 	tag("dataset-cars", "v1")
 	expect(1, "a released version")
@@ -60,6 +61,19 @@ func TestController_DatasetEvents(t *testing.T) {
 	verifyResponseOK(t, del, err)
 	n.Wait()
 	expect(2, "a deleted version leaves the dropdown")
+
+	// PRD novelcore/kaos#1911 D-03: a named version joins and leaves the dropdown like a vN.
+	c.n.Store(0)
+	tag("dataset-cars", "snapshot")
+	expect(1, "a named version")
+	del, err = clt.DeleteTagWithResponse(ctx, "dataset-cars", "snapshot", &apigen.DeleteTagParams{})
+	verifyResponseOK(t, del, err)
+	n.Wait()
+	expect(2, "a deleted named version leaves the dropdown")
+	del, err = clt.DeleteTagWithResponse(ctx, "dataset-cars", "k-7f3a", &apigen.DeleteTagParams{})
+	verifyResponseOK(t, del, err)
+	n.Wait()
+	expect(2, "a deleted k-* tag triggers nothing")
 
 	set, err := clt.SetRepositoryMetadataWithResponse(ctx, "dataset-cars", apigen.SetRepositoryMetadataJSONRequestBody{
 		Metadata: apigen.RepositoryMetadataSet_Metadata{AdditionalProperties: map[string]string{"kaos.description": "cars"}},

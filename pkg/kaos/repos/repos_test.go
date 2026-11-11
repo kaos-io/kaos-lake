@@ -9,10 +9,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/graveler"
+	"github.com/treeverse/lakefs/pkg/kaos/datasetevents"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
 )
 
@@ -107,7 +109,7 @@ func (f *fakeCatalog) ListRepositories(_ context.Context, limit int, prefix, _, 
 
 const prefix = "gs://kaos-e2e-lakefs/"
 
-var want = repos.Desired("dataset-default", map[string]string{"yolo": "outputs-yolo", "hera": "outputs-hera"})
+var want = repos.Desired("dataset-default", map[string]string{"yolo": "outputs-yolo", "hera": "outputs-hera"}, nil)
 
 // AC-01: a new project gets its default dataset and one outputs repository per app, labelled.
 func TestReconcile_CreatesAndLabelsTheDeclaredRepositories(t *testing.T) {
@@ -150,7 +152,7 @@ func TestReconcile_KeepsAndLabelsOrphanedOutputs(t *testing.T) {
 	require.Equal(t, "true", f.md["outputs-old"][repos.KeyOrphaned])
 	require.Empty(t, f.md["outputs-handmade"])
 
-	back := repos.Desired("dataset-default", map[string]string{"old": "outputs-old"})
+	back := repos.Desired("dataset-default", map[string]string{"old": "outputs-old"}, nil)
 	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", back)
 	require.NoError(t, err)
 	require.NotContains(t, f.md["outputs-old"], repos.KeyOrphaned)
@@ -172,6 +174,11 @@ func TestValidateMetadata(t *testing.T) {
 		{"outputs-yolo", map[string]string{repos.KeyKind: "outputs"}, false},
 		{"dataset-cars", map[string]string{repos.KeyDefault: "true"}, false},
 		{"dataset-cars", map[string]string{repos.KeyApp: "yolo"}, false},
+		// PRD novelcore/kaos#1911 CON-02: who produces a dataset is the platform's to say.
+		{"dataset-cars", map[string]string{repos.KeyProducer: "yolo"}, false},
+		{"dataset-cars", map[string]string{repos.KeyProducer: ""}, false},
+		{"dataset-cars", map[string]string{repos.KeyProducer + ".filtered": "yolo"}, false},
+		{"dataset-cars", map[string]string{"kaos.producers": "free text"}, true},
 		{"dataset-cars", map[string]string{repos.KeyKind: "table"}, false},
 	} {
 		err := repos.ValidateMetadata(c.name, c.md)
@@ -183,6 +190,8 @@ func TestValidateMetadata(t *testing.T) {
 	}
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyKind}), repos.ErrInvalid)
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyOrphaned}), repos.ErrInvalid)
+	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyProducer}), repos.ErrInvalid)
+	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyProducer + ".filtered"}), repos.ErrInvalid)
 	require.NoError(t, repos.ValidateDelete([]string{repos.KeyDescription}))
 }
 
@@ -246,4 +255,39 @@ func TestReconcile_LabelsHandmadeDatasets(t *testing.T) {
 	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.NoError(t, err)
 	require.Equal(t, repos.KindDataset, f.md["dataset-fresh"][repos.KeyKind])
+}
+
+// PRD novelcore/kaos#1911 F-10: a dataset an app declares is created, labelled a dataset of that
+// producer, and announced at once, so pipelines can pick it before its first run.
+func TestReconcile_CreatesProducedDatasets(t *testing.T) {
+	c := &count{}
+	n := datasetevents.NewNotifier(c, nil).WithTiming(20*time.Millisecond, time.Millisecond)
+	datasetevents.Activate(n)
+	t.Cleanup(func() { datasetevents.Activate(nil) })
+
+	f := newFake()
+	want := repos.Desired("dataset-default", map[string]string{"yolo": "outputs-yolo"},
+		map[string]string{"dataset-clean": "yolo", "dataset-embeddings": "hera"})
+	changes, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Equal(t, []string{"dataset-default", "outputs-yolo", "dataset-clean", "dataset-embeddings"}, f.created)
+	require.Equal(t, "gs://kaos-e2e-lakefs/dataset-clean", f.repos["dataset-clean"].StorageNamespace)
+	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "yolo"}, f.md["dataset-clean"])
+	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "hera"}, f.md["dataset-embeddings"])
+	require.NotContains(t, f.md["dataset-default"], repos.KeyProducer)
+	require.NotEmpty(t, changes)
+	n.Wait()
+	require.EqualValues(t, 1, c.n.Load(), "the new datasets are announced, in one event")
+
+	again, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Empty(t, again, "a second pass changes nothing")
+	n.Wait()
+	require.EqualValues(t, 1, c.n.Load(), "and announces nothing")
+
+	// A producer label someone removed or changed in the store is put back.
+	f.md["dataset-clean"][repos.KeyProducer] = "other"
+	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Equal(t, "yolo", f.md["dataset-clean"][repos.KeyProducer])
 }

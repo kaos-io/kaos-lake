@@ -112,10 +112,12 @@ To release, open a pull request that bumps `kaos/VERSION`.
   as the layout's current name and are never written.
 - **Dataset catalog** (PRD novelcore/kaos#1283 F-07, D-05). With workload identity on and
   `kaos.catalog.namespaces` set, `GET /kaos/v1/catalog` answers the datasets (name, default,
-  description, location, main's head, `vN` versions newest first) to pods of those namespaces by
+  description, location, main's head, and versions: `vN` newest first, then every other tag by name
+  as a named version, never the `k-*` tags of kept runs, PRD novelcore/kaos#1911 D-03) to pods of those namespaces by
   their service-account token, any account, acting as no user. It never serves data.
 - **Dataset release event** (PRD novelcore/kaos#1283 D-05). With `kaos.dataset_events.namespace` set
-  (the project's CI namespace), a released or deleted `vN` tag on a `dataset-*` repository, a repository
+  (the project's CI namespace), a created or deleted version tag on a `dataset-*` repository (`vN`, or
+  any other name since PRD novelcore/kaos#1911 D-03; never a kept run's `k-*`), a repository
   labelled `kaos.kind=dataset`, and a deleted `dataset-*` repository make kaos-lake create ONE Workflow
   there (`ml-ci-dataset-release`, as `dataset-release-sa`), through the Kubernetes API with its own
   service-account token, which asks each of the project's ML apps to re-read the catalog and re-render
@@ -312,3 +314,22 @@ To release, open a pull request that bumps `kaos/VERSION`.
   repository record: the move to `IN_DELETION`, the final delete, and creation. In-process only,
   which is enough for the single replica each project runs; with several replicas the other
   replicas stay bounded by the 5-7 s TTL. Marked `KAOS-FORK` in `pkg/cache` and `pkg/graveler/ref`.
+- **Datasets a pipeline produces** (PRD novelcore/kaos#1911 F-10, D-04, CON-02). A declared app
+  user's file may carry `datasets`: the `dataset-*` repositories its pipeline produces, by full
+  repository name. A name that is not a dataset's, or a dataset declared twice (by two apps or by
+  one), fails the whole load, so a dataset has one producer. For each, the app's `KAOSApp-<app>`
+  policy adds, to the read every app has on every dataset: write and delete on objects; create,
+  delete and commit on branches `run-*`; commit on `main`; create on tags `k-*`. Nothing on a
+  dataset it does not declare, no other branch or tag (so no `vN` and no named version), no tag
+  deletion, no branch reset, no repository settings. The repositories reconcile creates each
+  declared dataset under `kaos.repositories.storage_namespace_prefix`, labels it
+  `kaos.kind=dataset` and `kaos.producer=<app>`, and announces it at once (the dataset release
+  event), so pipelines can pick it before its first run. It is labelled in the pass that creates
+  it, so `main` is protected from the start: the commit right on `main` only ever lands a merge,
+  and lakeFS refuses a direct write or commit there. `kaos.producer`, and every key under
+  `kaos.producer.`, is a platform key: the metadata API refuses to set or delete it for any
+  caller. A dataset that already exists is adopted and labelled; one no app declares any longer
+  keeps its label and its data, and its former producer is back to read-only. lakeFS authorises
+  object writes per repository, not per branch: on a branch of its dataset that is neither `main`
+  nor `run-*` (one a person made) the producer can stage objects but never commit them. Code:
+  `pkg/auth/declared`, `pkg/kaos/repos`.
