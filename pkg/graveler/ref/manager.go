@@ -205,6 +205,14 @@ func (m *Manager) createBareRepository(ctx context.Context, repositoryID gravele
 }
 
 func (m *Manager) CreateRepository(ctx context.Context, repositoryID graveler.RepositoryID, repository graveler.Repository) (*graveler.RepositoryRecord, error) {
+	return m.CreateRepositoryWithMetadata(ctx, repositoryID, repository, nil)
+}
+
+// CreateRepositoryWithMetadata creates a repository that carries metadata from the moment it
+// exists. Modified by KAOS (PRD novelcore/kaos#1911 CON-02): the metadata is written to the new
+// instance's own partition before the repository record, the write that makes the repository
+// exist, so nobody ever sees it without its metadata.
+func (m *Manager) CreateRepositoryWithMetadata(ctx context.Context, repositoryID graveler.RepositoryID, repository graveler.Repository, metadata graveler.RepositoryMetadata) (*graveler.RepositoryRecord, error) {
 	firstCommit := graveler.NewCommit()
 	firstCommit.Message = graveler.FirstCommitMsg
 	firstCommit.Generation = 1
@@ -227,6 +235,12 @@ func (m *Manager) CreateRepository(ctx context.Context, repositoryID graveler.Re
 	err = m.createBranch(ctx, graveler.RepoPartition(repo), repository.DefaultBranchID, branch)
 	if err != nil {
 		return nil, err
+	}
+	if len(metadata) > 0 {
+		err = kv.SetMsg(ctx, m.kvStore, graveler.RepoPartition(repo), []byte(graveler.RepoMetadataPath()), graveler.ProtoFromRepositoryMetadata(metadata))
+		if err != nil {
+			return nil, err
+		}
 	}
 	_, err = m.createBareRepository(ctx, repositoryID, repository)
 	if err != nil {

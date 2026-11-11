@@ -206,15 +206,18 @@ export const DatasetCard = ({ repo, detail = false, created = false }) => {
                         <Button size="sm" variant="outline-secondary" onClick={() => setUsage(!usage)}>
                             How to use in a pipeline
                         </Button>
-                        <Button
-                            size="sm"
-                            variant="success"
-                            disabled={busy}
-                            onClick={release}
-                            title="Tag main's head as the next version; pipelines can then pick it"
-                        >
-                            {busy ? 'Releasing…' : 'Release version'}
-                        </Button>
+                        {/* A dataset a pipeline produces has commits, latest and names, never vN. */}
+                        {!labels['kaos.producer'] && (
+                            <Button
+                                size="sm"
+                                variant="success"
+                                disabled={busy}
+                                onClick={release}
+                                title="Tag main's head as the next version; pipelines can then pick it"
+                            >
+                                {busy ? 'Releasing…' : 'Release version'}
+                            </Button>
+                        )}
                     </div>
                 </div>
                 {created && <NextSteps repoId={repo.id} hasVersion={!!latest} />}

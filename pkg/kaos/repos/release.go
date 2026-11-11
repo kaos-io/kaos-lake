@@ -3,6 +3,8 @@
 package repos
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -28,6 +30,18 @@ func VersionName(tag string) bool {
 // reconcile pass), and the label is itself a change (NoteDataset).
 func ReleaseTag(repo, tag string) bool {
 	return ValidName(repo, DatasetPrefix) && VersionName(tag)
+}
+
+// ErrNumberedVersion refuses a vN tag on a dataset a pipeline produces.
+var ErrNumberedVersion = errors.New("a dataset a pipeline produces has commits, latest and names; vN is for datasets people upload")
+
+// ValidateTag checks a tag a caller creates on a repository labelled md. A dataset a pipeline
+// produces takes no numbered release (PRD novelcore/kaos#1911 D-03).
+func ValidateTag(md map[string]string, tag string) error {
+	if md[KeyProducer] != "" && VersionTag.MatchString(tag) {
+		return fmt.Errorf("%w: %s is produced by %s, name the version instead", ErrNumberedVersion, tag, md[KeyProducer])
+	}
+	return nil
 }
 
 // NoteRelease tells the project's ML apps that a version of repo was released or deleted, when it
