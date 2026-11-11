@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/treeverse/lakefs/pkg/catalog"
@@ -188,7 +189,7 @@ func Desired(defaultDataset string, outputs, producers map[string]string) []Decl
 // Catalog is what Reconcile needs of the lakeFS catalog.
 type Catalog interface {
 	GetRepository(ctx context.Context, repository string) (*catalog.Repository, error)
-	CreateRepository(ctx context.Context, repository, storageID, storageNamespace, branch string, readOnly bool) (*catalog.Repository, error)
+	CreateRepositoryWithMetadata(ctx context.Context, repository, storageID, storageNamespace, branch string, readOnly bool, metadata map[string]string) (*catalog.Repository, error)
 	GetRepositoryMetadata(ctx context.Context, repository string) (graveler.RepositoryMetadata, error)
 	UpdateRepositoryMetadata(ctx context.Context, repository string, metadata graveler.RepositoryMetadata) error
 	DeleteRepositoryMetadata(ctx context.Context, repository string, keys []string) error
@@ -270,39 +271,38 @@ func reconcileRest(ctx context.Context, c Catalog, storagePrefix, location strin
 
 // notAdoptable says why the existing repository of produced dataset d, labelled md, is not d's
 // producer's to write; empty when it is. A dataset is written by people or by one pipeline, never
-// both (PRD novelcore/kaos#1911 CON-02), so only a repository that already names this producer is
-// taken, or one nobody wrote and nobody labelled: what a pass that stopped between creating and
-// labelling leaves behind.
-func notAdoptable(ctx context.Context, c Catalog, d Declared, r *catalog.Repository, md graveler.RepositoryMetadata) (string, error) {
+// both (PRD novelcore/kaos#1911 CON-02). Reconcile creates a produced dataset with its labels in
+// one step, so a repository that exists without this producer's label was made by someone else,
+// whatever it holds: it is never taken.
+func notAdoptable(d Declared, md graveler.RepositoryMetadata) string {
 	switch {
 	case md[KeyProducer] == d.Producer:
-		return "", nil
+		return ""
 	case md[KeyProducer] != "":
-		return "it is produced by " + md[KeyProducer], nil
+		return "it is produced by " + md[KeyProducer]
 	case md[KeyDefault] == "true":
-		return "it is the project's default dataset, which people write", nil
+		return "it is the project's default dataset, which people write"
 	case md[KeyKind] != "":
-		return "it is a dataset people write", nil
+		return "it is a dataset people write"
+	default:
+		return "it exists and the platform did not create it for " + d.Producer
 	}
-	head, err := c.GetCommit(ctx, r.Name, r.DefaultBranch)
-	if err != nil {
-		return "", err
-	}
-	if len(head.Parents) > 0 {
-		return "it already holds data that " + d.Producer + " did not produce", nil
-	}
-	return "", nil
 }
 
 func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d Declared, note func(string, ...any)) error {
-	existing, err := c.GetRepository(ctx, d.Name)
+	_, err := c.GetRepository(ctx, d.Name)
 	if errors.Is(err, graveler.ErrNotFound) {
-		existing = nil
+		// Created with its labels: it never exists without them, so a repository found without
+		// them below was not made here.
 		ns := strings.TrimSuffix(storagePrefix, "/") + "/" + d.Name
-		if _, err := c.CreateRepository(ctx, d.Name, storageID, ns, defaultBranch, false); err != nil {
+		if _, err := c.CreateRepositoryWithMetadata(ctx, d.Name, storageID, ns, defaultBranch, false, d.Labels()); err != nil {
 			return fmt.Errorf("create in %s: %w", ns, err)
 		}
-		note("created %s in %s", d.Name, ns)
+		note("created %s in %s, labelled %v", d.Name, ns, d.Labels())
+		if d.Producer != "" {
+			NoteDataset(d.Name) // it joins the dropdown now
+		}
+		return nil
 	} else if err != nil {
 		return err
 	}
@@ -310,12 +310,8 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 	if err != nil {
 		return err
 	}
-	if existing != nil && d.Producer != "" {
-		why, err := notAdoptable(ctx, c, d, existing, md)
-		if err != nil {
-			return err
-		}
-		if why != "" {
+	if d.Producer != "" {
+		if why := notAdoptable(d, md); why != "" {
 			return fmt.Errorf("%w: app %s declares it, but %s; %s gets no write access to it", ErrNotAdopted, d.Producer, why, d.Producer)
 		}
 	}
@@ -330,10 +326,6 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 			return err
 		}
 		note("labelled %s %v", d.Name, update)
-		// A produced dataset is labelled here, not by a person: it joins the dropdown now.
-		if d.Producer != "" && update[KeyKind] == KindDataset {
-			NoteDataset(d.Name)
-		}
 	}
 	if md[KeyOrphaned] != "" {
 		if err := c.DeleteRepositoryMetadata(ctx, d.Name, []string{KeyOrphaned}); err != nil {
@@ -380,6 +372,28 @@ func forEachRepository(ctx context.Context, c Catalog, prefix string, fn func(r 
 			return nil
 		}
 	}
+}
+
+// declaredProducers returns the app that produces each dataset apps declare, by dataset; set by
+// Declare.
+var declaredProducers atomic.Pointer[func() map[string]string]
+
+// Declare tells this package which datasets apps declare (producers: dataset → app), so that
+// nobody but Reconcile creates a repository with one of those names (DeclaredProducer).
+func Declare(producers func() map[string]string) {
+	declaredProducers.Store(&producers)
+}
+
+// DeclaredProducer returns the app that declares dataset name, when one does. The API refuses to
+// create a repository with such a name (PRD novelcore/kaos#1911 CON-02): Reconcile creates it,
+// labelled, and a repository someone made first would never be the app's.
+func DeclaredProducer(name string) (string, bool) {
+	producers := declaredProducers.Load()
+	if producers == nil {
+		return "", false
+	}
+	app, ok := (*producers)()[name]
+	return app, ok
 }
 
 // Run reconciles the declared repositories now and every interval until ctx ends. outputs returns

@@ -48,7 +48,7 @@ func (l *lake) GetRepository(_ context.Context, name string) (*catalog.Repositor
 	return &catalog.Repository{Name: name, DefaultBranch: "main"}, nil
 }
 
-func (l *lake) CreateRepository(context.Context, string, string, string, string, bool) (*catalog.Repository, error) {
+func (l *lake) CreateRepositoryWithMetadata(context.Context, string, string, string, string, bool, map[string]string) (*catalog.Repository, error) {
 	return nil, errors.New("not in this test")
 }
 

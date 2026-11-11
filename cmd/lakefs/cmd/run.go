@@ -130,6 +130,9 @@ var runCmd = &cobra.Command{
 		// run in, are the declared ones.
 		var exchangeTTL time.Duration
 		declaredApps := &declared.Loaded{}
+		// Modified by KAOS: nobody but the reconcile creates a repository an app declares (PRD
+		// novelcore/kaos#1911 CON-02).
+		repos.Declare(declaredApps.Datasets)
 		var producedCatalog atomic.Pointer[catalog.Catalog]
 		if workload := baseCfg.KAOS.WorkloadIdentity; workload.Audience != "" {
 			if baseCfg.KAOS.AppUsers.Path == "" {

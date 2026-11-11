@@ -27,7 +27,8 @@ var peopleGroups = []string{setup.SuperUsersGroup, setup.DevelopersGroup, setup.
 
 // PeoplePolicy denies, on each of the produced datasets, what would change its content or its run
 // versions: writing and deleting objects, every branch change (create, delete, commit, merge,
-// revert, reset), and creating or deleting the k-* tags of kept runs. A denial wins over any
+// revert, reset), opening or changing pull requests, and creating or deleting the k-* tags of
+// kept runs. A denial wins over any
 // allowance. Reading stays, and so does naming a version: a tag that is not k-* on a commit that
 // exists.
 func PeoplePolicy(datasets []string) *model.Policy {
@@ -40,8 +41,10 @@ func PeoplePolicy(datasets []string) *model.Policy {
 		deny(permissions.BranchArn(d, "*"), permissions.CreateBranchAction, permissions.DeleteBranchAction,
 			permissions.CreateCommitAction, permissions.RevertBranchAction)
 		deny(permissions.TagArn(d, KeptTagPrefix+"*"), permissions.CreateTagAction, permissions.DeleteTagAction)
-		// Commit records and restored refs are asked on the repository itself.
-		deny(permissions.RepoArn(d), permissions.CreateCommitAction, permissions.CreateBranchAction, permissions.CreateTagAction)
+		// Commit records, restored refs and pull requests are asked on the repository itself. A
+		// pull request there could never merge, so none is opened or changed.
+		deny(permissions.RepoArn(d), permissions.CreateCommitAction, permissions.CreateBranchAction, permissions.CreateTagAction,
+			permissions.WritePullRequestAction)
 	}
 	return &model.Policy{CreatedAt: time.Now(), DisplayName: ProducedPolicy, Statement: st}
 }

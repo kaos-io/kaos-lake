@@ -1283,6 +1283,33 @@ func (g *Graveler) CreateRepository(ctx context.Context, repositoryID Repository
 	return repository, nil
 }
 
+// MetadataRepositoryCreator is a RefManager that creates a repository together with its metadata.
+// Modified by KAOS (PRD novelcore/kaos#1911 CON-02).
+type MetadataRepositoryCreator interface {
+	CreateRepositoryWithMetadata(ctx context.Context, repositoryID RepositoryID, repository Repository, metadata RepositoryMetadata) (*RepositoryRecord, error)
+}
+
+// CreateRepositoryWithMetadata is CreateRepository for a repository that carries metadata from
+// the moment it exists. Modified by KAOS (PRD novelcore/kaos#1911 CON-02).
+func (g *Graveler) CreateRepositoryWithMetadata(ctx context.Context, repositoryID RepositoryID, storageID StorageID, storageNamespace StorageNamespace, branchID BranchID, readOnly bool, metadata RepositoryMetadata) (*RepositoryRecord, error) {
+	creator, ok := g.RefManager.(MetadataRepositoryCreator)
+	if !ok {
+		return nil, fmt.Errorf("create repository with metadata: %w", ErrInvalid)
+	}
+	_, err := g.RefManager.GetRepository(ctx, repositoryID)
+	if err != nil && !errors.Is(err, ErrRepositoryNotFound) {
+		return nil, err
+	}
+	return creator.CreateRepositoryWithMetadata(ctx, repositoryID, NewRepository(storageID, storageNamespace, branchID, readOnly), metadata)
+}
+
+// IsBranchBlocked reports whether action is blocked on branchID as the write paths see it: through
+// the protection manager's cached rules, not the stored ones GetBranchProtectionRules reads.
+// Modified by KAOS (PRD novelcore/kaos#1911 CON-03).
+func (g *Graveler) IsBranchBlocked(ctx context.Context, repository *RepositoryRecord, branchID BranchID, action BranchProtectionBlockedAction) (bool, error) {
+	return g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, action)
+}
+
 func (g *Graveler) CreateBareRepository(ctx context.Context, repositoryID RepositoryID, storageID StorageID, storageNamespace StorageNamespace, defaultBranchID BranchID, readOnly bool) (*RepositoryRecord, error) {
 	_, err := g.RefManager.GetRepository(ctx, repositoryID)
 	if err != nil && !errors.Is(err, ErrRepositoryNotFound) {

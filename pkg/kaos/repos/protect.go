@@ -75,13 +75,17 @@ func ReconcileProtection(ctx context.Context, c Catalog, p ProtectionCatalog) ([
 type ProducerCatalog interface {
 	GetRepositoryMetadata(ctx context.Context, repository string) (graveler.RepositoryMetadata, error)
 	ProtectionCatalog
+	// IsBranchBlocked answers from the rules the write paths enforce, which lag the stored ones.
+	IsBranchBlocked(ctx context.Context, repository, branch string, action graveler.BranchProtectionBlockedAction) (bool, error)
 }
 
 // ProducedBy reports whether dataset is ready for app to write (PRD novelcore/kaos#1911 CON-02,
 // CON-03): the repository exists, is labelled kaos.producer=app, and its main refuses direct
 // writes and commits. pkg/auth/declared grants an app its write rights on a dataset only while
 // this holds, so the app never holds the commit right on a main that is not its own or not
-// protected, whichever of the two reconciles runs first.
+// protected, whichever of the two reconciles runs first. Protected means both that the stored
+// rules block direct writes and commits on main and that the write paths already enforce it: they
+// read the rules through a cache that lags a few seconds behind a new rule.
 func ProducedBy(ctx context.Context, c ProducerCatalog, dataset, app string) (bool, error) {
 	md, err := c.GetRepositoryMetadata(ctx, dataset)
 	if errors.Is(err, graveler.ErrNotFound) {
@@ -107,6 +111,10 @@ func ProducedBy(ctx context.Context, c ProducerCatalog, dataset, app string) (bo
 	for _, a := range protectedActions {
 		if !slices.Contains(blocked.Value, a) {
 			return false, nil
+		}
+		enforced, err := c.IsBranchBlocked(ctx, dataset, protectedBranch, a)
+		if err != nil || !enforced {
+			return false, err
 		}
 	}
 	return true, nil

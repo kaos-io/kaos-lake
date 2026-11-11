@@ -91,8 +91,13 @@ func TestReconcilePeople(t *testing.T) {
 		}
 	}
 
+	pullRequests := func(repo string, want bool) []row {
+		return []row{{permissions.WritePullRequestAction, permissions.RepoArn(repo), want}}
+	}
+
 	// Before the reconcile, editors write everything: the gap this closes.
 	check("dev@example.com", writes(produced, true))
+	check("dev@example.com", pullRequests(produced, true))
 
 	changes, err := repos.ReconcilePeople(ctx, f, svc)
 	require.NoError(t, err)
@@ -104,6 +109,9 @@ func TestReconcilePeople(t *testing.T) {
 		check(editor, names(produced))
 		check(editor, writes(uploaded, true))
 	}
+	// A pull request into a produced dataset could never merge: none is opened or changed there.
+	check("dev@example.com", pullRequests(produced, false))
+	check("dev@example.com", pullRequests(uploaded, true))
 	check("viewer@example.com", writes(produced, false))
 	check("viewer@example.com", reads(produced))
 	check("admin", writes(produced, true))

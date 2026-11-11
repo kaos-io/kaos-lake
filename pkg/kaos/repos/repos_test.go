@@ -46,9 +46,10 @@ func (f *fakeCatalog) GetRepository(_ context.Context, name string) (*catalog.Re
 	return nil, graveler.ErrRepositoryNotFound
 }
 
-func (f *fakeCatalog) CreateRepository(_ context.Context, name, storageID, ns, branch string, _ bool) (*catalog.Repository, error) {
+func (f *fakeCatalog) CreateRepositoryWithMetadata(_ context.Context, name, storageID, ns, branch string, _ bool, md map[string]string) (*catalog.Repository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.md[name] = maps.Clone(graveler.RepositoryMetadata(md))
 	r := &catalog.Repository{Name: name, StorageID: storageID, StorageNamespace: ns, DefaultBranch: branch}
 	f.repos[name], f.created = r, append(f.created, name)
 	return r, nil
@@ -289,8 +290,8 @@ func TestReconcile_CreatesProducedDatasets(t *testing.T) {
 
 // PRD novelcore/kaos#1911 CON-02: a dataset is written by people or by one pipeline, never both. A
 // declared dataset that already exists is the app's only when it already names that app as its
-// producer, or when nobody wrote or labelled it (a pass that stopped between creating and
-// labelling). Anything else is left exactly as it is and reported; the other datasets go on.
+// producer. Anything else, whatever it holds, is left exactly as it is and reported; the other
+// datasets go on.
 func TestReconcile_AdoptsOnlyItsOwn(t *testing.T) {
 	f := newFake()
 	f.add("dataset-default", map[string]string{repos.KeyKind: "dataset", repos.KeyDefault: "true"})
@@ -298,23 +299,24 @@ func TestReconcile_AdoptsOnlyItsOwn(t *testing.T) {
 	f.add("dataset-hera", map[string]string{repos.KeyKind: "dataset", repos.KeyProducer: "hera"})
 	f.add("dataset-mine", map[string]string{repos.KeyProducer: "yolo"}) // its kind label was lost
 	f.add("dataset-handmade", nil)                                      // unlabelled, with someone's commit
-	f.add("dataset-halfmade", nil)
-	f.empty["dataset-halfmade"] = true
+	f.add("dataset-untouched", nil)                                     // unlabelled and empty: still someone else's
+	f.empty["dataset-untouched"] = true
 	before := map[string]graveler.RepositoryMetadata{}
 	for name, md := range f.md {
 		before[name] = maps.Clone(md)
 	}
 	want := repos.Desired("dataset-default", nil, map[string]string{
 		"dataset-default": "yolo", "dataset-cars": "yolo", "dataset-hera": "yolo", "dataset-mine": "yolo",
-		"dataset-handmade": "yolo", "dataset-halfmade": "yolo", "dataset-new": "yolo",
+		"dataset-handmade": "yolo", "dataset-untouched": "yolo", "dataset-new": "yolo",
 	})
 	_, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.ErrorIs(t, err, repos.ErrNotAdopted)
 	for dataset, why := range map[string]string{
-		"dataset-default":  "it is the project's default dataset, which people write",
-		"dataset-cars":     "it is a dataset people write",
-		"dataset-hera":     "it is produced by hera",
-		"dataset-handmade": "it already holds data that yolo did not produce",
+		"dataset-default":   "it is the project's default dataset, which people write",
+		"dataset-cars":      "it is a dataset people write",
+		"dataset-hera":      "it is produced by hera",
+		"dataset-handmade":  "it exists and the platform did not create it for yolo",
+		"dataset-untouched": "it exists and the platform did not create it for yolo",
 	} {
 		require.ErrorContains(t, err, "repository "+dataset+": dataset not adopted: app yolo declares it, but "+why)
 		require.NotEqual(t, "yolo", f.md[dataset][repos.KeyProducer], dataset)
@@ -322,8 +324,9 @@ func TestReconcile_AdoptsOnlyItsOwn(t *testing.T) {
 	for _, dataset := range []string{"dataset-default", "dataset-cars", "dataset-hera"} {
 		require.Equal(t, before[dataset], f.md[dataset], "%s is left as it was", dataset)
 	}
-	// Its own, the half-made one and the new one are in place, despite the refusals before them.
-	for _, dataset := range []string{"dataset-mine", "dataset-halfmade", "dataset-new"} {
+	require.Empty(t, f.md["dataset-untouched"])
+	// Its own and the new one are in place, despite the refusals before them.
+	for _, dataset := range []string{"dataset-mine", "dataset-new"} {
 		require.NotContains(t, err.Error(), dataset)
 		require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "yolo"}, f.md[dataset], dataset)
 	}

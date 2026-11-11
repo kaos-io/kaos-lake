@@ -2280,6 +2280,14 @@ func (c *Controller) CreateRepository(w http.ResponseWriter, r *http.Request, bo
 	}
 	ctx := r.Context()
 
+	// Modified by KAOS: a dataset an app declares is created by the platform, labelled; a
+	// repository someone made first would never be the app's (PRD novelcore/kaos#1911 CON-02).
+	if app, ok := repos.DeclaredProducer(body.Name); ok {
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"%s is a dataset produced by %s: the platform creates it, nobody else can", body.Name, app))
+		return
+	}
+
 	// Verify first if there is a repository definition.
 	// Return conflict if definition already exists, before
 	// creating the repository itself and ensuring (optional) storage namespace holds an object.
@@ -5496,6 +5504,19 @@ func (c *Controller) CreateTag(w http.ResponseWriter, r *http.Request, body apig
 	}
 	ctx := r.Context()
 	c.LogAction(ctx, "create_tag", r, repository, body.Id, "")
+
+	// Modified by KAOS: no numbered release on a dataset a pipeline produces (PRD
+	// novelcore/kaos#1911 D-03).
+	if repos.VersionTag.MatchString(body.Id) {
+		labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
+		if c.handleAPIError(ctx, w, r, err) {
+			return
+		}
+		if err := repos.ValidateTag(labels, body.Id); err != nil {
+			writeError(w, r, http.StatusBadRequest, err)
+			return
+		}
+	}
 
 	commitID, err := c.Catalog.CreateTag(ctx, repository, body.Id, body.Ref, graveler.WithForce(swag.BoolValue(body.Force)))
 	if c.handleAPIError(ctx, w, r, err) {

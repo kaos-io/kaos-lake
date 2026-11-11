@@ -247,3 +247,144 @@ func TestReconcileProtection_GoesOnAfterAFailure(t *testing.T) {
 	}, changes)
 	require.ErrorIs(t, addFile(t, c, "dataset-ccc", "main", "direct.txt"), graveler.ErrWriteToProtectedBranch)
 }
+
+// PRD novelcore/kaos#1911 CON-02: a repository someone made under a name an app later declares is
+// never the app's, whatever shape it has. Each of these looked untouched to a check of the default
+// branch's head alone: data on main beside another default branch, an uncommitted upload on main,
+// data on a side branch. And one nobody touched at all: still not made by the platform.
+func TestReconcile_NeverAdoptsWhatSomeoneMade(t *testing.T) {
+	ctx := t.Context()
+	c := realCatalog(t)
+	create := func(name, defaultBranch string) {
+		_, err := c.CreateRepository(ctx, name, "", "mem://"+name, defaultBranch, false)
+		require.NoError(t, err)
+	}
+	commit := func(repo, branch, file string) {
+		require.NoError(t, addFile(t, c, repo, branch, file))
+		_, err := c.Commit(ctx, repo, branch, "by a person", "alice", nil, nil, nil, false)
+		require.NoError(t, err)
+	}
+	// (a) the default branch is not main; people's data is committed on main.
+	create("dataset-trunk", "trunk")
+	_, err := c.CreateBranch(ctx, "dataset-trunk", "main", "trunk")
+	require.NoError(t, err)
+	commit("dataset-trunk", "main", "people.jpg")
+	// (b) an upload on main that nobody committed.
+	create("dataset-staged", "main")
+	require.NoError(t, addFile(t, c, "dataset-staged", "main", "uncommitted.jpg"))
+	// (c) data on a side branch.
+	create("dataset-side", "main")
+	_, err = c.CreateBranch(ctx, "dataset-side", "theirs", "main")
+	require.NoError(t, err)
+	commit("dataset-side", "theirs", "people.jpg")
+	// (d) nothing at all.
+	create("dataset-empty", "main")
+
+	shapes := []string{"dataset-trunk", "dataset-staged", "dataset-side", "dataset-empty"}
+	producers := map[string]string{"dataset-fresh": "yolo"}
+	for _, name := range shapes {
+		producers[name] = "yolo"
+	}
+	_, err = repos.Reconcile(ctx, c, "", "mem://lake", "", repos.Desired("", nil, producers))
+	require.ErrorIs(t, err, repos.ErrNotAdopted)
+	_, perr := repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, perr)
+	for _, name := range shapes {
+		require.ErrorContains(t, err, "repository "+name+": dataset not adopted: app yolo declares it, but it exists and the platform did not create it for yolo")
+		md, merr := c.GetRepositoryMetadata(ctx, name)
+		require.NoError(t, merr)
+		require.Empty(t, md, "%s keeps its labels: none", name)
+		ready, rerr := repos.ProducedBy(ctx, c, name, "yolo")
+		require.NoError(t, rerr)
+		require.False(t, ready, "%s is never ready for the app", name)
+	}
+	// What the person made is still theirs to change.
+	require.NoError(t, addFile(t, c, "dataset-staged", "main", "more.jpg"))
+	require.NoError(t, c.DeleteBranch(ctx, "dataset-side", "theirs"))
+
+	// The one the reconcile made carries its labels from the moment it exists.
+	md, err := c.GetRepositoryMetadata(ctx, "dataset-fresh")
+	require.NoError(t, err)
+	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: repos.KindDataset, repos.KeyProducer: "yolo"}, md)
+}
+
+// A repository created with metadata is never seen without it: the labels are in place by the
+// time the repository can be read at all.
+func TestCreateRepositoryWithMetadata(t *testing.T) {
+	ctx := t.Context()
+	c := realCatalog(t)
+	_, err := c.GetRepositoryMetadata(ctx, "dataset-clean")
+	require.ErrorIs(t, err, graveler.ErrNotFound)
+	labels := map[string]string{repos.KeyKind: repos.KindDataset, repos.KeyProducer: "yolo"}
+	r, err := c.CreateRepositoryWithMetadata(ctx, "dataset-clean", "", "mem://dataset-clean", "main", false, labels)
+	require.NoError(t, err)
+	require.Equal(t, "main", r.DefaultBranch)
+	md, err := c.GetRepositoryMetadata(ctx, "dataset-clean")
+	require.NoError(t, err)
+	require.Equal(t, graveler.RepositoryMetadata(labels), md)
+	// It is an ordinary repository otherwise: labels update, a second creation is refused.
+	require.NoError(t, c.UpdateRepositoryMetadata(ctx, "dataset-clean", graveler.RepositoryMetadata{repos.KeyLocation: "here"}))
+	md, err = c.GetRepositoryMetadata(ctx, "dataset-clean")
+	require.NoError(t, err)
+	require.Equal(t, "yolo", md[repos.KeyProducer])
+	require.Equal(t, "here", md[repos.KeyLocation])
+	_, err = c.CreateRepositoryWithMetadata(ctx, "dataset-clean", "", "mem://dataset-clean-2", "main", false, labels)
+	require.ErrorIs(t, err, graveler.ErrNotUnique)
+	_, err = c.GetBranchReference(ctx, "dataset-clean", "main")
+	require.NoError(t, err)
+}
+
+// cachedCatalog is realCatalog with the settings cache the server runs with, so the rules the
+// write paths enforce lag the stored ones.
+func cachedCatalog(t *testing.T) *catalog.Catalog {
+	t.Helper()
+	ctx := context.WithoutCancel(t.Context())
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	viper.Set(config.BlockstoreTypeKey, block.BlockstoreTypeMem)
+	viper.Set("database.type", mem.DriverName)
+	viper.Set("committed.local_cache.size_bytes", 24*1024*1024)
+	viper.Set("committed.sstable.memory.cache_size_bytes", 2*1024*1024)
+	cfg := &config.ConfigImpl{}
+	_, err := config.NewConfig("", cfg)
+	require.NoError(t, err)
+	cfg.Committed.LocalCache.Dir = path.Join(t.TempDir(), "cache")
+	c, err := catalog.New(ctx, catalog.Config{Config: cfg, KVStore: kvtest.GetStore(ctx, t), PathProvider: upload.DefaultPathProvider})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+// PRD novelcore/kaos#1911 CON-03: the stored rules say protected a few seconds before the write
+// paths enforce it (they read the rules through a cache). A dataset is ready only once a direct
+// write to main would really be refused.
+func TestProducedBy_WaitsForEnforcement(t *testing.T) {
+	ctx := t.Context()
+	c := cachedCatalog(t)
+	_, err := repos.Reconcile(ctx, c, "", "mem://lake", "", repos.Desired("", nil, map[string]string{"dataset-clean": "yolo"}))
+	require.NoError(t, err)
+	// A write before protection: the write paths now hold "no rule" in their cache.
+	require.NoError(t, addFile(t, c, "dataset-clean", "main", "early.txt"))
+	require.NoError(t, c.ResetBranch(ctx, "dataset-clean", "main"))
+
+	_, err = repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, err)
+	rules, _, err := c.GetBranchProtectionRules(ctx, "dataset-clean")
+	require.NoError(t, err)
+	require.NotEmpty(t, rules.BranchPatternToBlockedActions["main"].GetValue(), "the stored rules already protect main")
+
+	ready, err := repos.ProducedBy(ctx, c, "dataset-clean", "yolo")
+	require.NoError(t, err)
+	if !ready {
+		// Not ready exactly while the core would still take a direct write.
+		require.NoError(t, addFile(t, c, "dataset-clean", "main", "window.txt"), "enforcement has not caught up: not ready is right")
+		require.NoError(t, c.ResetBranch(ctx, "dataset-clean", "main"))
+	}
+	require.False(t, ready, "the stored rules alone do not make it ready")
+	require.Eventually(t, func() bool {
+		ok, err := repos.ProducedBy(ctx, c, "dataset-clean", "yolo")
+		require.NoError(t, err)
+		return ok
+	}, 30*time.Second, 100*time.Millisecond)
+	require.ErrorIs(t, addFile(t, c, "dataset-clean", "main", "late.txt"), graveler.ErrWriteToProtectedBranch, "ready means enforced")
+}
