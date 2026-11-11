@@ -262,7 +262,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
   without it is refused with 400, naming the field, so two runs cannot be mixed by a client that
   leaves it out. The first promotion into a fresh dataset names `main`'s initial commit. Merges
   into other branches, into datasets people upload and into outputs repositories are unchanged.
-  Pull-request merges do not carry it. Only the Go API code
+  A pull request carries no expected head, so merging one into `main` of a produced dataset is
+  refused with 400 and the pull request stays open; pull requests elsewhere merge as before. Only the Go API code
   (`pkg/api/apigen`) is regenerated; the bundled SDK clients (`clients/`) are upstream's and do not
   know the field. Code: `api/swagger.yml`, `pkg/api/controller.go` (MergeIntoBranch),
   `pkg/graveler/graveler.go` (`WithExpectedHead`).

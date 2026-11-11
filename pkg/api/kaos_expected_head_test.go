@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-openapi/swag"
 	"github.com/stretchr/testify/require"
 	"github.com/treeverse/lakefs/pkg/api/apigen"
 	"github.com/treeverse/lakefs/pkg/api/apiutil"
@@ -203,4 +204,59 @@ func TestController_MergeIntoProducedDatasetNeedsExpectedHead(t *testing.T) {
 	// Elsewhere nothing changed: another branch of the produced dataset, and a dataset people upload.
 	require.Equal(t, http.StatusOK, merge(produced, "main", "run-b", apigen.MergeIntoBranchJSONRequestBody{}).StatusCode())
 	require.Equal(t, http.StatusOK, merge(uploaded, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{}).StatusCode())
+}
+
+// PRD novelcore/kaos#1911 CON-03: a pull request carries no expected head, so it never merges
+// into main of a dataset a pipeline produces; otherwise a stale run refused as a plain merge would
+// land as a pull request and main would hold two runs. Pull requests elsewhere merge as before.
+func TestController_MergePullRequestIntoProducedDatasetRefused(t *testing.T) {
+	clt, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	const produced, uploaded = "dataset-clean", "dataset-cars"
+	for _, repo := range []string{produced, uploaded} {
+		_, err := deps.catalog.CreateRepository(ctx, repo, config.SingleBlockstoreID, onBlock(deps, repo), "main", false)
+		require.NoError(t, err)
+		runBranch(t, deps, repo, "run-a")
+		runBranch(t, deps, repo, "run-b")
+	}
+	require.NoError(t, deps.catalog.UpdateRepositoryMetadata(ctx, produced, map[string]string{"kaos.kind": "dataset", "kaos.producer": "yolo"}))
+	start := mainHead(t, deps, produced)
+	pullRequest := func(repo, source, dest string) string {
+		resp, err := clt.CreatePullRequestWithResponse(ctx, repo, apigen.CreatePullRequestJSONRequestBody{
+			Title: source, SourceBranch: source, DestinationBranch: dest,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp.JSON201, string(resp.Body))
+		return resp.JSON201.Id
+	}
+
+	// run-a is promoted with the head it expects.
+	merge, err := clt.MergeIntoBranchWithResponse(ctx, produced, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{ExpectedHead: &start})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, merge.StatusCode(), string(merge.Body))
+	promoted := mainHead(t, deps, produced)
+
+	// run-b, staged from the old head: refused as a plain merge, and as a pull request.
+	merge, err = clt.MergeIntoBranchWithResponse(ctx, produced, "run-b", "main", apigen.MergeIntoBranchJSONRequestBody{})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, merge.StatusCode())
+	id := pullRequest(produced, "run-b", "main")
+	pr, err := clt.MergePullRequestWithResponse(ctx, produced, id)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, pr.StatusCode(), string(pr.Body))
+	require.Contains(t, pr.JSON400.Message, "expected_head")
+	require.Equal(t, promoted, mainHead(t, deps, produced), "main did not move")
+	_, err = deps.catalog.GetEntry(ctx, produced, "main", "run-b.txt", catalog.GetEntryParams{})
+	require.ErrorIs(t, err, graveler.ErrNotFound, "the two runs are not mixed")
+	got, err := clt.GetPullRequestWithResponse(ctx, produced, id)
+	require.NoError(t, err)
+	require.Equal(t, "open", swag.StringValue(got.JSON200.Status), "the refused pull request stays open")
+
+	// Into another branch of the produced dataset, and into an uploaded dataset's main: as before.
+	pr, err = clt.MergePullRequestWithResponse(ctx, produced, pullRequest(produced, "main", "run-b"))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, pr.StatusCode(), string(pr.Body))
+	pr, err = clt.MergePullRequestWithResponse(ctx, uploaded, pullRequest(uploaded, "run-a", "main"))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, pr.StatusCode(), string(pr.Body))
 }

@@ -6143,6 +6143,19 @@ func (c *Controller) MergePullRequest(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
+	// Modified by KAOS: a pull request carries no expected head, so it never lands on main of a
+	// dataset a pipeline produces (PRD novelcore/kaos#1911 CON-03).
+	labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
+	if c.handleAPIError(ctx, w, r, err) {
+		return
+	}
+	if repos.MergeNeedsExpectedHead(labels, pr.Destination) {
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"%s of %s, a dataset produced by %s, moves only by a merge that carries expected_head; a pull request cannot merge into it",
+			pr.Destination, repository, labels[repos.KeyProducer]))
+		return
+	}
+
 	// Attempt to merge branches
 	reference, err := c.Catalog.Merge(ctx, repository, pr.Destination, pr.Source, user.Committer(), "", nil, "")
 	if c.handleAPIError(ctx, w, r, err) {
