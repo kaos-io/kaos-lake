@@ -3,6 +3,7 @@
 package declared_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -378,7 +379,18 @@ func TestReconcile_DeclaredDatasetRights(t *testing.T) {
 	a.Datasets = []string{"dataset-clean"}
 	b := mlci
 	b.Datasets = []string{"dataset-splits"}
+	// Declared, and nothing says the datasets are ready: read only.
 	_, err := declared.Reconcile(ctx, svc, []declared.App{a, b}, 0)
+	require.NoError(t, err)
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, permissions.ObjectArn("dataset-clean", "a")))
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, permissions.ObjectArn("dataset-clean", "a")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateCommitAction, permissions.BranchArn("dataset-clean", "main")))
+
+	// Ready for the app that produces them, and for no other.
+	ready := declared.WithProducedDatasets(func(_ context.Context, dataset, app string) bool {
+		return map[string]string{"dataset-clean": "yolo", "dataset-splits": "mlci"}[dataset] == app
+	})
+	_, err = declared.Reconcile(ctx, svc, []declared.App{a, b}, 0, ready)
 	require.NoError(t, err)
 
 	const (
@@ -436,7 +448,7 @@ func TestReconcile_DeclaredDatasetRights(t *testing.T) {
 	require.False(t, allowed(t, svc, b.User, permissions.WriteObjectAction, obj(own, "a")))
 
 	// The rights follow the declaration: a dataset no longer declared is read-only again.
-	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo, b}, 0)
+	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo, b}, 0, ready)
 	require.NoError(t, err)
 	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj(own, "a")))
 	require.False(t, allowed(t, svc, a.User, permissions.CreateCommitAction, branch(own, "main")))

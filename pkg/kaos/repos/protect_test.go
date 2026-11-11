@@ -4,6 +4,7 @@ package repos_test
 
 import (
 	"context"
+	"errors"
 	"path"
 	"testing"
 	"time"
@@ -179,4 +180,70 @@ func TestProducedDataset_MainMovesOnlyByMerge(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.GetEntry(ctx, "dataset-clean", "main", "images/1.jpg", catalog.GetEntryParams{})
 	require.NoError(t, err)
+}
+
+// PRD novelcore/kaos#1911 CON-02, CON-03: a produced dataset is ready for its app only once it
+// exists, names that app as producer and has main protected.
+func TestProducedBy(t *testing.T) {
+	ctx := t.Context()
+	c := realCatalog(t)
+	ready := func(dataset, app string) bool {
+		ok, err := repos.ProducedBy(ctx, c, dataset, app)
+		require.NoError(t, err)
+		return ok
+	}
+	require.False(t, ready("dataset-clean", "yolo"), "no repository yet")
+
+	_, err := repos.Reconcile(ctx, c, "", "mem://lake", "", repos.Desired("", nil, map[string]string{"dataset-clean": "yolo"}))
+	require.NoError(t, err)
+	require.False(t, ready("dataset-clean", "yolo"), "labelled, main not protected yet")
+
+	_, err = repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, err)
+	require.True(t, ready("dataset-clean", "yolo"))
+	require.False(t, ready("dataset-clean", "hera"), "another app")
+	require.False(t, ready("dataset-clean", ""))
+
+	// Half a rule is not protection; a dataset people upload is nobody's to produce.
+	require.NoError(t, c.SetBranchProtectionRules(ctx, "dataset-clean", &graveler.BranchProtectionRules{
+		BranchPatternToBlockedActions: map[string]*graveler.BranchProtectionBlockedActions{
+			"main": {Value: []graveler.BranchProtectionBlockedAction{graveler.BranchProtectionBlockedAction_STAGING_WRITE}},
+		},
+	}, nil))
+	require.False(t, ready("dataset-clean", "yolo"), "commits to main not blocked")
+	newRepo(t, c, "dataset-cars", map[string]string{repos.KeyKind: repos.KindDataset})
+	_, err = repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, err)
+	require.True(t, ready("dataset-clean", "yolo"), "the rule is completed again")
+	require.False(t, ready("dataset-cars", "yolo"))
+}
+
+// brokenRules fails to read the protection rules of one repository.
+type brokenRules struct {
+	repos.ProtectionCatalog
+	broken string
+}
+
+func (b brokenRules) GetBranchProtectionRules(ctx context.Context, repo string) (*graveler.BranchProtectionRules, *string, error) {
+	if repo == b.broken {
+		return nil, nil, errors.New("rules unreadable")
+	}
+	return b.ProtectionCatalog.GetBranchProtectionRules(ctx, repo)
+}
+
+// One dataset whose rules cannot be read or written does not leave the datasets after it open:
+// every other one is protected, and every failure is reported.
+func TestReconcileProtection_GoesOnAfterAFailure(t *testing.T) {
+	ctx := t.Context()
+	c := realCatalog(t)
+	for _, name := range []string{"dataset-aaa", "dataset-bbb", "dataset-ccc"} {
+		newRepo(t, c, name, map[string]string{repos.KeyKind: repos.KindDataset})
+	}
+	changes, err := repos.ReconcileProtection(ctx, c, brokenRules{ProtectionCatalog: c, broken: "dataset-aaa"})
+	require.ErrorContains(t, err, "repository dataset-aaa: rules unreadable")
+	require.Equal(t, []string{
+		"protected main of dataset-bbb: only a merge may change it",
+		"protected main of dataset-ccc: only a merge may change it",
+	}, changes)
+	require.ErrorIs(t, addFile(t, c, "dataset-ccc", "main", "direct.txt"), graveler.ErrWriteToProtectedBranch)
 }

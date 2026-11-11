@@ -245,7 +245,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
   label (set last by the New dataset flow, after the first commit to main, so that commit is not
   blocked), adds only what is missing, re-applies a deleted rule on the next pass (every
   `kaos.repositories.interval`), and never removes protection, so a dataset that loses its label
-  stays protected. Outputs repositories are not protected. Editors (Developers) lack
+  stays protected. One dataset whose rules cannot be read or written does not stop the pass: the
+  others are protected and every failure is logged. Outputs repositories are not protected. Editors (Developers) lack
   `branches:SetBranchProtectionRules`, so only Admins change rules. Between a dataset's label and the
   next pass main is open for up to one interval. Code: `pkg/kaos/repos/protect.go`.
 - **A merge may name the head it expects** (PRD novelcore/kaos#1911 F-12, D-05, CON-03).
@@ -309,6 +310,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
   and a link to the owner's lakeFS; the section is hidden when nothing is shared, and an older
   server (404 or the UI's page) reads as nothing shared. Code: `pkg/kaos/sharing/handlers.go`,
   `webui/src/pages/kaos/sharedWithUs.jsx`.
+- **A branch protected from commits refuses every commit** (PRD novelcore/kaos#1911 CON-03).
+  Upstream asks the branch protection rule `commit` only on a direct commit and a hard reset. A
+  revert, a cherry-pick and an import each put a new commit at the branch's head as well, so
+  `graveler.Revert`, `graveler.CherryPick` and `graveler.Import` now ask the same rule first and
+  answer the same error (`cannot commit to protected branch`, 403), in every repository. With the
+  rule KAOS sets on a dataset's `main`, that branch moves only by a merge (a pull request's or a
+  promotion's); reverting a dataset's `main` is done on a branch and merged. Code:
+  `pkg/graveler/graveler.go` (`refuseCommitToProtected`).
 - **A deleted repository leaves the repository cache** (release `1.86.0-kaos.28`). lakeFS caches
   each repository record (`graveler.repository_cache`, 5 s + 2 s jitter) and deleting a repository
   never invalidated that entry, so for 5-7 s after a delete `GET /repositories/<name>` answered 200
@@ -319,22 +328,60 @@ To release, open a pull request that bumps `kaos/VERSION`.
   repository record: the move to `IN_DELETION`, the final delete, and creation. In-process only,
   which is enough for the single replica each project runs; with several replicas the other
   replicas stay bounded by the 5-7 s TTL. Marked `KAOS-FORK` in `pkg/cache` and `pkg/graveler/ref`.
-- **Datasets a pipeline produces** (PRD novelcore/kaos#1911 F-10, D-04, CON-02). A declared app
-  user's file may carry `datasets`: the `dataset-*` repositories its pipeline produces, by full
-  repository name. A name that is not a dataset's, or a dataset declared twice (by two apps or by
-  one), fails the whole load, so a dataset has one producer. For each, the app's `KAOSApp-<app>`
-  policy adds, to the read every app has on every dataset: write and delete on objects; create,
-  delete and commit on branches `run-*`; commit on `main`; create on tags `k-*`. Nothing on a
-  dataset it does not declare, no other branch or tag (so no `vN` and no named version), no tag
-  deletion, no branch reset, no repository settings. The repositories reconcile creates each
-  declared dataset under `kaos.repositories.storage_namespace_prefix`, labels it
-  `kaos.kind=dataset` and `kaos.producer=<app>`, and announces it at once (the dataset release
-  event), so pipelines can pick it before its first run. It is labelled in the pass that creates
-  it, so `main` is protected from the start: the commit right on `main` only ever lands a merge,
-  and lakeFS refuses a direct write or commit there. `kaos.producer`, and every key under
-  `kaos.producer.`, is a platform key: the metadata API refuses to set or delete it for any
-  caller. A dataset that already exists is adopted and labelled; one no app declares any longer
-  keeps its label and its data, and its former producer is back to read-only. lakeFS authorises
-  object writes per repository, not per branch: on a branch of its dataset that is neither `main`
-  nor `run-*` (one a person made) the producer can stage objects but never commit them. Code:
-  `pkg/auth/declared`, `pkg/kaos/repos`.
+- **Datasets a pipeline produces** (PRD novelcore/kaos#1911 F-10, D-04, CON-02, CON-03). A dataset
+  is written by people or by exactly one step of one pipeline, never both.
+  - *Declaring.* A declared app user's file may carry `datasets`: the `dataset-*` repositories its
+    pipeline produces, by full repository name. A name that is not a dataset's, or a dataset
+    declared twice (by two apps or by one), fails the whole load.
+  - *Creating.* The repositories reconcile creates each declared dataset that does not exist under
+    `kaos.repositories.storage_namespace_prefix`, labels it `kaos.kind=dataset` and
+    `kaos.producer=<app>`, protects its `main` in the same pass, and announces it at once (the
+    dataset event), so pipelines can pick it before its first run.
+  - *Never adopting.* A declared dataset that already exists is the app's only if it already
+    carries `kaos.producer=<that app>`, or if nobody wrote or labelled it (only lakeFS's initial
+    commit and no `kaos.kind`: what a pass that stopped between creating and labelling leaves).
+    The project's default dataset, a dataset people uploaded, a repository holding someone's
+    commits and another app's dataset are left exactly as they are; the reconcile logs
+    `dataset not adopted: app <app> declares it, but <reason>` every pass, the app gets no write
+    access to it, and the other datasets and apps go on. A changed or removed producer label is
+    not put back.
+  - *The app's rights.* On a declared dataset the app's `KAOSApp-<app>` policy adds, to the read
+    every app has on every dataset: write and delete on objects; create, delete and commit on
+    branches `run-*`; commit on `main`; create on tags `k-*`. Nothing on a dataset it does not
+    declare, no other branch or tag (so no `vN` and no named version), no tag deletion, no branch
+    reset, no repository settings. These statements are written only while the dataset is ready:
+    the repository exists, carries `kaos.producer=<app>`, and its `main` blocks `staging_write` and
+    `commit` (`repos.ProducedBy`, read by the app-users reconcile on every pass). Until then, and
+    again one pass after it stops being true, the app only reads it. The two reconciles run on
+    their own intervals; in either order the app never holds the commit right on a `main` that is
+    not its own or not protected. So the commit right on `main` lands only a merge. That rests on
+    two things: branch protection in place before the right is given, and "A branch protected from
+    commits refuses every commit" above, without which a cherry-pick, a revert or an import would
+    pass (upstream checks only a direct commit and a hard reset).
+  - *People.* The repositories reconcile keeps the policy `KAOSProducedDatasets` listing every
+    repository labelled `kaos.producer` and attached to SuperUsers, Developers and Viewers. On
+    those repositories it denies writing and deleting objects, every branch change (create,
+    delete, commit and so merge, cherry-pick and import, revert and reset), creating and deleting
+    `k-*` tags, and commit records; in lakeFS a denial wins over any allowance. People keep
+    reading, and keep naming versions: creating and deleting tags that are not `k-*` on commits
+    that exist. Admins are not restricted: an admin can detach any policy and change any rule, so a
+    denial there would only look like a guarantee, and repairing a dataset needs someone who can
+    write it. Groups other than those three (a custom group mapped from a token claim) are not
+    covered.
+  - *The label.* `kaos.producer`, and every key under `kaos.producer.`, is a platform key: the
+    metadata API refuses to set or delete it for every caller, admins included. There is no route
+    in this image that changes a dataset's producer or hands a produced dataset to people; it is
+    not a side effect of changing an app's file either (the new app is refused, see above). Moving
+    a dataset that holds data to another producer needs a platform change that does not exist yet.
+    A dataset no app declares any longer keeps its label and its data, stays closed to people, and
+    its former producer is back to read-only; the same app declaring it again gets it back.
+  - *Reserved tag prefix.* `k-` is reserved, in every dataset, for the tags of kept runs: such a
+    tag is never listed as a version and never fires the dataset event. Nothing in kaos-lake
+    creates named versions (the UI's Release version creates `vN` only), so a person can create a
+    `k-` tag on an uploaded dataset only through lakeFS's own tag API, where it is accepted and
+    simply is not a version.
+  - *A limit.* lakeFS authorises object writes per repository, not per branch: on a branch of its
+    dataset that is neither `main` nor `run-*` the producer can stage objects but never commit
+    them.
+  Code: `pkg/auth/declared` (`WithProducedDatasets`), `pkg/kaos/repos` (`repos.go`, `protect.go`,
+  `people.go`).

@@ -1,3 +1,5 @@
+// Modified by KAOS: Revert, CherryPick and Import ask whether the branch is protected from commits
+// (PRD novelcore/kaos#1911 CON-03), so their tests expect that call.
 package graveler_test
 
 import (
@@ -581,6 +583,7 @@ func TestGravelerRevert(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.Revert(ctx, repository, branch1ID, graveler.Ref(commit2ID), 0, graveler.CommitParams{}, &graveler.CommitOverrides{})
 
 		require.NoError(t, err)
@@ -616,6 +619,7 @@ func TestGravelerRevert(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.Revert(ctx, repository, branch1ID, graveler.Ref(commit2ID), 0, commitParams, &commitOverrides)
 
 		require.NoError(t, err)
@@ -650,6 +654,7 @@ func TestGravelerRevert(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.Revert(ctx, repository, branch1ID, graveler.Ref(commit2ID), 0, commitParams, &commitOverrides)
 
 		require.NoError(t, err)
@@ -675,6 +680,7 @@ func TestGravelerRevert(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.Revert(ctx, repository, branch1ID, graveler.Ref(commit2ID), 0, commitParams, nil)
 
 		require.NoError(t, err)
@@ -702,6 +708,7 @@ func TestGravelerRevert(t *testing.T) {
 				return err
 			}).Times(1)
 
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.Revert(ctx, repository, branch1ID, graveler.Ref(commit2ID), 0, graveler.CommitParams{}, &graveler.CommitOverrides{})
 
 		require.True(t, errors.Is(err, graveler.ErrDirtyBranch))
@@ -775,6 +782,7 @@ func TestGravelerCherryPick(t *testing.T) {
 		}).Times(1)
 
 		parent := 1
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.CherryPick(ctx, repository, branch1ID, graveler.Ref(commit2ID), &parent, "tester", &graveler.CommitOverrides{})
 
 		require.NoError(t, err)
@@ -803,6 +811,7 @@ func TestGravelerCherryPick(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 		parent := 1
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.CherryPick(ctx, repository, branch1ID, graveler.Ref(commit2ID), &parent, "tester", &commitOverrides)
 
 		require.NoError(t, err)
@@ -828,6 +837,7 @@ func TestGravelerCherryPick(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 		parent := 1
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.CherryPick(ctx, repository, branch1ID, graveler.Ref(commit2ID), &parent, "tester", &commitOverrides)
 
 		require.NoError(t, err)
@@ -846,6 +856,7 @@ func TestGravelerCherryPick(t *testing.T) {
 			return commit3ID, nil
 		}).Times(1)
 		parent := 1
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.CherryPick(ctx, repository, branch1ID, graveler.Ref(commit2ID), &parent, "tester", nil)
 
 		require.NoError(t, err)
@@ -1090,6 +1101,7 @@ func TestGravelerImport(t *testing.T) {
 		test.StagingManager.EXPECT().DropAsync(ctx, stagingToken3).Times(1)
 		test.RefManager.EXPECT().SetRepositoryMetadata(ctx, repository, gomock.Any())
 
+		test.ProtectedBranchesManager.EXPECT().IsBlocked(ctx, repository, branch1ID, graveler.BranchProtectionBlockedAction_COMMIT).Return(false, nil)
 		val, err := test.Sut.Import(ctx, repository, branch1ID, commit2.MetaRangeID, graveler.CommitParams{Metadata: metadata}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, val)

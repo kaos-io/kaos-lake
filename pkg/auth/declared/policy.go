@@ -45,11 +45,13 @@ func AppPolicyName(user string) string { return AppPolicyPrefix + strings.TrimPr
 // AppPolicy is what an app may do (PRD novelcore/kaos#1283 D-04, T-01): read every dataset;
 // read and write its own outputs repository; and, while the project still has apps from before
 // outputs repositories, read and write legacyRepository. Nothing else: not another app's outputs,
-// not a dataset. Except the datasets it declares (PRD novelcore/kaos#1911 D-04): on those it also
-// writes and deletes objects, creates and deletes run-* branches, commits on run-* and on main (the
-// merge: pkg/kaos/repos keeps direct writes and commits off a dataset's main), and creates k-* tags.
-// Never a v* tag, another branch, or the repository's settings.
-func AppPolicy(a App, legacyRepository string) *model.Policy {
+// not a dataset. Except the datasets it produces (PRD novelcore/kaos#1911 D-04), produced: those
+// it declares that are ready (WithProducedDatasets). On those it also writes and deletes objects,
+// creates and deletes run-* branches, commits on run-* and on main, and creates k-* tags. Never a
+// v* tag, another branch, or the repository's settings. The commit right on main lands only a
+// merge: main is protected before the right is given, and the core refuses a direct commit, a
+// revert, a cherry-pick and an import on a protected branch.
+func AppPolicy(a App, legacyRepository string, produced []string) *model.Policy {
 	var st model.Statements
 	allow := func(actions []string, resource string) {
 		st = append(st, model.Statement{Effect: model.StatementEffectAllow, Action: actions, Resource: resource})
@@ -67,7 +69,7 @@ func AppPolicy(a App, legacyRepository string) *model.Policy {
 			allow(writeActions, r)
 		}
 	}
-	for _, d := range a.Datasets {
+	for _, d := range produced {
 		allow([]string{permissions.WriteObjectAction, permissions.DeleteObjectAction}, permissions.ObjectArn(d, "*"))
 		allow([]string{permissions.CreateBranchAction, permissions.DeleteBranchAction, permissions.CreateCommitAction},
 			permissions.BranchArn(d, runBranches))
@@ -79,8 +81,8 @@ func AppPolicy(a App, legacyRepository string) *model.Policy {
 
 // ensureAppPolicy makes a's policy exist as AppPolicy says, attach to a and only to a, and
 // detaches any other policy from a (drift).
-func ensureAppPolicy(ctx context.Context, svc auth.Service, a App, legacyRepository string, note func(string, ...any)) error {
-	want := AppPolicy(a, legacyRepository)
+func ensureAppPolicy(ctx context.Context, svc auth.Service, a App, legacyRepository string, produced []string, note func(string, ...any)) error {
+	want := AppPolicy(a, legacyRepository, produced)
 	have, err := svc.GetPolicy(ctx, want.DisplayName)
 	switch {
 	case errors.Is(err, auth.ErrNotFound):

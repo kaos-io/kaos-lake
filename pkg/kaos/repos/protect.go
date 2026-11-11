@@ -4,6 +4,7 @@ package repos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -43,18 +44,72 @@ type ProtectionCatalog interface {
 // main). It returns a description of each change.
 func ReconcileProtection(ctx context.Context, c Catalog, p ProtectionCatalog) ([]string, error) {
 	var changes []string
+	var failed []error
 	err := forEachRepository(ctx, c, DatasetPrefix, func(r *catalog.Repository) error {
+		// One dataset that cannot be read or protected does not leave the others open.
 		md, err := c.GetRepositoryMetadata(ctx, r.Name)
-		if err != nil || md[KeyKind] != KindDataset {
-			return err
+		if err != nil {
+			failed = append(failed, fmt.Errorf("repository %s: %w", r.Name, err))
+			return nil
+		}
+		if md[KeyKind] != KindDataset {
+			return nil
 		}
 		changed, err := protect(ctx, p, r.Name)
+		if err != nil {
+			failed = append(failed, fmt.Errorf("repository %s: %w", r.Name, err))
+			return nil
+		}
 		if changed {
 			changes = append(changes, fmt.Sprintf("protected main of %s: only a merge may change it", r.Name))
 		}
-		return err
+		return nil
 	})
-	return changes, err
+	if err != nil {
+		failed = append(failed, err)
+	}
+	return changes, errors.Join(failed...)
+}
+
+// ProducerCatalog is what ProducedBy reads of the lakeFS catalog.
+type ProducerCatalog interface {
+	GetRepositoryMetadata(ctx context.Context, repository string) (graveler.RepositoryMetadata, error)
+	ProtectionCatalog
+}
+
+// ProducedBy reports whether dataset is ready for app to write (PRD novelcore/kaos#1911 CON-02,
+// CON-03): the repository exists, is labelled kaos.producer=app, and its main refuses direct
+// writes and commits. pkg/auth/declared grants an app its write rights on a dataset only while
+// this holds, so the app never holds the commit right on a main that is not its own or not
+// protected, whichever of the two reconciles runs first.
+func ProducedBy(ctx context.Context, c ProducerCatalog, dataset, app string) (bool, error) {
+	md, err := c.GetRepositoryMetadata(ctx, dataset)
+	if errors.Is(err, graveler.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if app == "" || md[KeyProducer] != app {
+		return false, nil
+	}
+	rules, _, err := c.GetBranchProtectionRules(ctx, dataset)
+	if err != nil {
+		return false, err
+	}
+	if rules == nil {
+		return false, nil
+	}
+	blocked := rules.BranchPatternToBlockedActions[protectedBranch]
+	if blocked == nil {
+		return false, nil
+	}
+	for _, a := range protectedActions {
+		if !slices.Contains(blocked.Value, a) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // protect makes sure main of repo blocks protectedActions; it reports whether it changed the rules.

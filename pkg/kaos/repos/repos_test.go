@@ -285,9 +285,57 @@ func TestReconcile_CreatesProducedDatasets(t *testing.T) {
 	n.Wait()
 	require.EqualValues(t, 1, c.n.Load(), "and announces nothing")
 
-	// A producer label someone removed or changed in the store is put back.
-	f.md["dataset-clean"][repos.KeyProducer] = "other"
+}
+
+// PRD novelcore/kaos#1911 CON-02: a dataset is written by people or by one pipeline, never both. A
+// declared dataset that already exists is the app's only when it already names that app as its
+// producer, or when nobody wrote or labelled it (a pass that stopped between creating and
+// labelling). Anything else is left exactly as it is and reported; the other datasets go on.
+func TestReconcile_AdoptsOnlyItsOwn(t *testing.T) {
+	f := newFake()
+	f.add("dataset-default", map[string]string{repos.KeyKind: "dataset", repos.KeyDefault: "true"})
+	f.add("dataset-cars", map[string]string{repos.KeyKind: "dataset", repos.KeyDescription: "uploaded"})
+	f.add("dataset-hera", map[string]string{repos.KeyKind: "dataset", repos.KeyProducer: "hera"})
+	f.add("dataset-mine", map[string]string{repos.KeyProducer: "yolo"}) // its kind label was lost
+	f.add("dataset-handmade", nil)                                      // unlabelled, with someone's commit
+	f.add("dataset-halfmade", nil)
+	f.empty["dataset-halfmade"] = true
+	before := map[string]graveler.RepositoryMetadata{}
+	for name, md := range f.md {
+		before[name] = maps.Clone(md)
+	}
+	want := repos.Desired("dataset-default", nil, map[string]string{
+		"dataset-default": "yolo", "dataset-cars": "yolo", "dataset-hera": "yolo", "dataset-mine": "yolo",
+		"dataset-handmade": "yolo", "dataset-halfmade": "yolo", "dataset-new": "yolo",
+	})
+	_, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.ErrorIs(t, err, repos.ErrNotAdopted)
+	for dataset, why := range map[string]string{
+		"dataset-default":  "it is the project's default dataset, which people write",
+		"dataset-cars":     "it is a dataset people write",
+		"dataset-hera":     "it is produced by hera",
+		"dataset-handmade": "it already holds data that yolo did not produce",
+	} {
+		require.ErrorContains(t, err, "repository "+dataset+": dataset not adopted: app yolo declares it, but "+why)
+		require.NotEqual(t, "yolo", f.md[dataset][repos.KeyProducer], dataset)
+	}
+	for _, dataset := range []string{"dataset-default", "dataset-cars", "dataset-hera"} {
+		require.Equal(t, before[dataset], f.md[dataset], "%s is left as it was", dataset)
+	}
+	// Its own, the half-made one and the new one are in place, despite the refusals before them.
+	for _, dataset := range []string{"dataset-mine", "dataset-halfmade", "dataset-new"} {
+		require.NotContains(t, err.Error(), dataset)
+		require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "yolo"}, f.md[dataset], dataset)
+	}
+	require.Equal(t, []string{"dataset-new"}, f.created)
+
+	// A producer label changed or removed outside the reconcile is not put back: the dataset is
+	// then another app's, or people's, and stays so until the platform says otherwise.
+	f.md["dataset-new"][repos.KeyProducer] = "hera"
+	delete(f.md["dataset-mine"], repos.KeyProducer)
 	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", want)
-	require.NoError(t, err)
-	require.Equal(t, "yolo", f.md["dataset-clean"][repos.KeyProducer])
+	require.ErrorContains(t, err, "repository dataset-new: dataset not adopted: app yolo declares it, but it is produced by hera")
+	require.ErrorContains(t, err, "repository dataset-mine: dataset not adopted: app yolo declares it, but it is a dataset people write")
+	require.Equal(t, "hera", f.md["dataset-new"][repos.KeyProducer])
+	require.NotContains(t, f.md["dataset-mine"], repos.KeyProducer)
 }
