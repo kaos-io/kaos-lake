@@ -37,8 +37,16 @@ func TestController_RepositoryLabels(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, refused.StatusCode())
 	require.Contains(t, string(refused.Body), "dataset-")
 	require.Equal(t, http.StatusBadRequest, set("dataset-cars", map[string]string{"kaos.default": "true"}).StatusCode())
+	// PRD novelcore/kaos#1911 CON-02: nobody names a dataset's producer through the API.
+	refused = set("dataset-cars", map[string]string{"kaos.producer": "yolo"})
+	require.Equal(t, http.StatusBadRequest, refused.StatusCode())
+	require.Contains(t, string(refused.Body), "kaos.producer is set by the platform only")
+	require.Equal(t, http.StatusBadRequest, set("dataset-cars", map[string]string{"kaos.producer.filtered": "yolo"}).StatusCode())
 
 	del, err := clt.DeleteRepositoryMetadataWithResponse(ctx, "dataset-cars", apigen.DeleteRepositoryMetadataJSONRequestBody{Keys: []string{"kaos.kind"}})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, del.StatusCode())
+	del, err = clt.DeleteRepositoryMetadataWithResponse(ctx, "dataset-cars", apigen.DeleteRepositoryMetadataJSONRequestBody{Keys: []string{"kaos.producer"}})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, del.StatusCode())
 	del, err = clt.DeleteRepositoryMetadataWithResponse(ctx, "dataset-cars", apigen.DeleteRepositoryMetadataJSONRequestBody{Keys: []string{"kaos.description"}})

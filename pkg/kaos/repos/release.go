@@ -11,6 +11,10 @@ import (
 // VersionTag matches the tag of a released dataset version: v1, v2, ...
 var VersionTag = regexp.MustCompile(`^v(\d+)$`)
 
+// KeptTagPrefix starts the tags a producing app sets on the commits its runs keep (PRD
+// novelcore/kaos#1911 D-04): k-<run>. They pin a commit and name no version.
+const KeptTagPrefix = "k-"
+
 // ReleaseTag reports whether tag, created or deleted on repo, changes a dataset's versions: a `vN`
 // tag on a dataset-* repository. Whether the repository is also labelled a dataset is not asked:
 // a version is often released before the label (it is set after the first commit, or by the

@@ -50,6 +50,9 @@ type App struct {
 	// OutputsRepository is the app's own outputs repository, kept in place by pkg/kaos/repos
 	// (PRD novelcore/kaos#1283 F-01). Empty: the app has none.
 	OutputsRepository string `json:"outputs_repository,omitempty"`
+	// Datasets are the datasets the app's pipeline produces (PRD novelcore/kaos#1911 D-04): the
+	// repositories it alone may write, created by pkg/kaos/repos. A dataset has one producer.
+	Datasets []string `json:"datasets,omitempty"`
 }
 
 // Loaded holds the apps of the last successful load, for workload identity.
@@ -79,6 +82,20 @@ func (l *Loaded) Outputs() map[string]string {
 	return out
 }
 
+// Datasets returns each declared dataset's producer, by dataset: the app name (the user without
+// UserPrefix).
+func (l *Loaded) Datasets() map[string]string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	out := map[string]string{}
+	for user, a := range l.apps {
+		for _, d := range a.Datasets {
+			out[d] = strings.TrimPrefix(user, UserPrefix)
+		}
+	}
+	return out
+}
+
 // Set replaces the loaded apps.
 func (l *Loaded) Set(apps []App) {
 	byUser := make(map[string]App, len(apps))
@@ -101,6 +118,7 @@ func Load(dir string) ([]App, error) {
 	var apps []App
 	users := map[string]bool{}
 	keys := map[string]bool{}
+	producers := map[string]string{}
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -124,6 +142,16 @@ func Load(dir string) ([]App, error) {
 				path, ErrInvalid, a.OutputsRepository, repos.OutputsPrefix)
 		case users[a.User] || keys[a.AccessKeyID]:
 			return nil, fmt.Errorf("%s: %w: user %q or its access key is declared twice", path, ErrInvalid, a.User)
+		}
+		for _, d := range a.Datasets {
+			if !repos.ValidName(d, repos.DatasetPrefix) {
+				return nil, fmt.Errorf("%s: %w: dataset %q must be %s followed by 3-48 lowercase letters, digits or hyphens",
+					path, ErrInvalid, d, repos.DatasetPrefix)
+			}
+			if by, ok := producers[d]; ok {
+				return nil, fmt.Errorf("%s: %w: dataset %q is already declared by %s; a dataset has one producer", path, ErrInvalid, d, by)
+			}
+			producers[d] = a.User
 		}
 		users[a.User], keys[a.AccessKeyID] = true, true
 		apps = append(apps, a)

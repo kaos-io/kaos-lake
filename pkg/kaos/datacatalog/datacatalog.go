@@ -28,7 +28,8 @@ type Catalog interface {
 	GetBranchReference(ctx context.Context, repositoryID string, branch string) (string, error)
 }
 
-// Version is one released version of a dataset.
+// Version is one version of a dataset: a release people numbered (vN), or a commit someone named
+// with any other tag (PRD novelcore/kaos#1911 D-03).
 type Version struct {
 	Tag    string `json:"tag"`
 	Commit string `json:"commit"`
@@ -44,7 +45,7 @@ type Dataset struct {
 	Location    string    `json:"location,omitempty"`
 	Template    string    `json:"template,omitempty"` // kaos.template, when made from one
 	Latest      string    `json:"latest,omitempty"`   // main's head commit
-	Versions    []Version `json:"versions"`           // newest first
+	Versions    []Version `json:"versions"`           // vN newest first, then named versions by name
 }
 
 // List returns the datasets (dataset-* repositories labelled a dataset) with their versions.
@@ -100,18 +101,23 @@ func list(ctx context.Context, c Catalog, keep func(graveler.RepositoryMetadata)
 	}
 }
 
+// versions lists repo's vN tags, newest first, then every other tag by name, as named versions.
+// The k-* tags of kept runs are left out: they are not names anyone picks.
 func versions(ctx context.Context, c Catalog, repo string) ([]Version, error) {
-	out := []Version{}
+	numbered, named := []Version{}, []Version{}
 	after := ""
 	for {
-		page, more, err := c.ListTags(ctx, repo, "v", 1000, after)
+		page, more, err := c.ListTags(ctx, repo, "", 1000, after)
 		if err != nil {
 			return nil, err
 		}
 		for _, t := range page {
 			after = t.ID
-			if repos.VersionTag.MatchString(t.ID) {
-				out = append(out, Version{Tag: t.ID, Commit: t.CommitID})
+			switch {
+			case repos.VersionTag.MatchString(t.ID):
+				numbered = append(numbered, Version{Tag: t.ID, Commit: t.CommitID})
+			case !strings.HasPrefix(t.ID, repos.KeptTagPrefix):
+				named = append(named, Version{Tag: t.ID, Commit: t.CommitID})
 			}
 		}
 		if !more || len(page) == 0 {
@@ -119,8 +125,9 @@ func versions(ctx context.Context, c Catalog, repo string) ([]Version, error) {
 		}
 	}
 	n := func(tag string) int { v, _ := strconv.Atoi(strings.TrimPrefix(tag, "v")); return v }
-	slices.SortFunc(out, func(a, b Version) int { return n(b.Tag) - n(a.Tag) })
-	return out, nil
+	slices.SortFunc(numbered, func(a, b Version) int { return n(b.Tag) - n(a.Tag) })
+	slices.SortFunc(named, func(a, b Version) int { return strings.Compare(a.Tag, b.Tag) })
+	return append(numbered, named...), nil
 }
 
 // Handler answers GET /kaos/v1/catalog to pods of Namespaces, by their service-account token.

@@ -218,8 +218,9 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("kaos.dataset_events")
 		}
 
-		// Modified by KAOS: keep the project's default dataset and each declared app's outputs
-		// repository in place (PRD novelcore/kaos#1283 F-01).
+		// Modified by KAOS: keep the project's default dataset, each declared app's outputs
+		// repository (PRD novelcore/kaos#1283 F-01) and the datasets apps produce (PRD
+		// novelcore/kaos#1911 F-10) in place.
 		// Datasets shared with other projects get read-only grants in the multi-user store (F-12).
 		if r := baseCfg.KAOS.Repositories; r.StorageNamespacePrefix != "" {
 			var shares repos.AuthService
@@ -227,7 +228,7 @@ var runCmd = &cobra.Command{
 				shares = authService
 			}
 			go repos.Run(ctx, c, shares, r.StorageID, r.StorageNamespacePrefix, r.Location, r.DefaultDataset,
-				declaredApps.Outputs, r.Interval, logger)
+				declaredApps.Outputs, declaredApps.Datasets, r.Interval, logger)
 		}
 
 		// Setup usage reporter - it is no longer possible to disable it

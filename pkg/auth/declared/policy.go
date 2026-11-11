@@ -31,13 +31,24 @@ var (
 	}
 )
 
+// The branches and tags of a dataset its producer works with (PRD novelcore/kaos#1911 D-04): a run
+// stages on its own run-* branch, a promotion merges it into main, and a kept version is tagged k-*.
+const (
+	runBranches    = "run-*"
+	promotedBranch = "main"
+	keptTags       = repos.KeptTagPrefix + "*"
+)
+
 // AppPolicyName is the name of the policy of app user user.
 func AppPolicyName(user string) string { return AppPolicyPrefix + strings.TrimPrefix(user, UserPrefix) }
 
 // AppPolicy is what an app may do (PRD novelcore/kaos#1283 D-04, T-01): read every dataset;
 // read and write its own outputs repository; and, while the project still has apps from before
 // outputs repositories, read and write legacyRepository. Nothing else: not another app's outputs,
-// not a dataset.
+// not a dataset. Except the datasets it declares (PRD novelcore/kaos#1911 D-04): on those it also
+// writes and deletes objects, creates and deletes run-* branches, commits on run-* and on main (the
+// merge: pkg/kaos/repos keeps direct writes and commits off a dataset's main), and creates k-* tags.
+// Never a v* tag, another branch, or the repository's settings.
 func AppPolicy(a App, legacyRepository string) *model.Policy {
 	var st model.Statements
 	allow := func(actions []string, resource string) {
@@ -55,6 +66,13 @@ func AppPolicy(a App, legacyRepository string) *model.Policy {
 		for _, r := range []string{permissions.RepoArn(name), permissions.RepoArn(name) + "/*"} {
 			allow(writeActions, r)
 		}
+	}
+	for _, d := range a.Datasets {
+		allow([]string{permissions.WriteObjectAction, permissions.DeleteObjectAction}, permissions.ObjectArn(d, "*"))
+		allow([]string{permissions.CreateBranchAction, permissions.DeleteBranchAction, permissions.CreateCommitAction},
+			permissions.BranchArn(d, runBranches))
+		allow([]string{permissions.CreateCommitAction}, permissions.BranchArn(d, promotedBranch))
+		allow([]string{permissions.CreateTagAction}, permissions.TagArn(d, keptTags))
 	}
 	return &model.Policy{CreatedAt: time.Now(), DisplayName: AppPolicyName(a.User), Statement: st}
 }

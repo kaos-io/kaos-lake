@@ -3,7 +3,7 @@
 // Package repos gives repositories a purpose people can see (PRD novelcore/kaos#1283): a dataset
 // (`dataset-*`), an ML app's outputs (`outputs-<app>`), or other. The purpose is repository
 // metadata under the `kaos.` prefix. The platform's own repositories (the project's default
-// dataset, each app's outputs) are declared and kept in place by Reconcile; a repository is never
+// dataset, each app's outputs, the datasets apps produce) are declared and kept in place by Reconcile; a repository is never
 // deleted here.
 package repos
 
@@ -31,6 +31,11 @@ const (
 	KeyTemplate    = "kaos.template"
 	KeyDescription = "kaos.description"
 	KeyOrphaned    = "kaos.orphaned"
+	// KeyProducer is the ML app whose pipeline produces the dataset: its only writer (PRD
+	// novelcore/kaos#1911 CON-02). Set by the platform only, as is every key under
+	// producerPrefix.
+	KeyProducer    = "kaos.producer"
+	producerPrefix = KeyProducer + "."
 	// KeyLocation is where the repository's storage lives (D-10); set by the platform only.
 	KeyLocation = "kaos.location"
 	// KeySharedWith lists the projects that may read a dataset, comma-separated (D-09). Only the
@@ -46,7 +51,12 @@ const (
 var ErrInvalid = errors.New("invalid repository label")
 
 // platformKeys are written by kaos-lake only: which repositories the platform declared.
-var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation}
+var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation, KeyProducer}
+
+// platformKey reports whether label key k is written by kaos-lake only.
+func platformKey(k string) bool {
+	return slices.Contains(platformKeys, k) || strings.HasPrefix(k, producerPrefix)
+}
 
 // projectName is one KubeProject name in kaos.shared_with.
 var projectName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -81,7 +91,7 @@ func ValidName(name, prefix string) bool {
 // kaos-lake's.
 func ValidateMetadata(name string, md map[string]string) error {
 	for k := range md {
-		if slices.Contains(platformKeys, k) {
+		if platformKey(k) {
 			return fmt.Errorf("%w: %s is set by the platform only", ErrInvalid, k)
 		}
 	}
@@ -114,7 +124,7 @@ func ValidateMetadata(name string, md map[string]string) error {
 // ValidateDelete checks the label keys a caller removes from a repository.
 func ValidateDelete(keys []string) error {
 	for _, k := range keys {
-		if k == KeyKind || slices.Contains(platformKeys, k) {
+		if k == KeyKind || platformKey(k) {
 			return fmt.Errorf("%w: %s is kept by the platform", ErrInvalid, k)
 		}
 	}
@@ -123,10 +133,11 @@ func ValidateDelete(keys []string) error {
 
 // Declared is one repository the platform keeps in place.
 type Declared struct {
-	Name    string
-	Kind    string
-	App     string // the outputs' app; empty for a dataset
-	Default bool   // the project's default dataset
+	Name     string
+	Kind     string
+	App      string // the outputs' app; empty for a dataset
+	Default  bool   // the project's default dataset
+	Producer string // the app that produces the dataset; empty for a dataset people write
 }
 
 // Labels are the declared repository's `kaos.` metadata.
@@ -138,11 +149,15 @@ func (d Declared) Labels() map[string]string {
 	if d.Default {
 		md[KeyDefault] = "true"
 	}
+	if d.Producer != "" {
+		md[KeyProducer] = d.Producer
+	}
 	return md
 }
 
-// Desired is the project's default dataset, when named, and one outputs repository per app.
-func Desired(defaultDataset string, outputs map[string]string) []Declared {
+// Desired is the project's default dataset, when named, one outputs repository per app, and the
+// datasets apps produce (producers: dataset → app).
+func Desired(defaultDataset string, outputs, producers map[string]string) []Declared {
 	var want []Declared
 	if defaultDataset != "" {
 		want = append(want, Declared{Name: defaultDataset, Kind: KindDataset, Default: true})
@@ -154,6 +169,14 @@ func Desired(defaultDataset string, outputs map[string]string) []Declared {
 	slices.Sort(apps)
 	for _, app := range apps {
 		want = append(want, Declared{Name: outputs[app], Kind: KindOutputs, App: app})
+	}
+	datasets := make([]string, 0, len(producers))
+	for d := range producers {
+		datasets = append(datasets, d)
+	}
+	slices.Sort(datasets)
+	for _, d := range datasets {
+		want = append(want, Declared{Name: d, Kind: KindDataset, Producer: producers[d]})
 	}
 	return want
 }
@@ -256,6 +279,10 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 			return err
 		}
 		note("labelled %s %v", d.Name, update)
+		// A produced dataset is labelled here, not by a person: it joins the dropdown now.
+		if d.Producer != "" && update[KeyKind] == KindDataset {
+			NoteDataset(d.Name)
+		}
 	}
 	if md[KeyOrphaned] != "" {
 		if err := c.DeleteRepositoryMetadata(ctx, d.Name, []string{KeyOrphaned}); err != nil {
@@ -305,10 +332,11 @@ func forEachRepository(ctx context.Context, c Catalog, prefix string, fn func(r 
 }
 
 // Run reconciles the declared repositories now and every interval until ctx ends. outputs returns
-// each declared app's outputs repository, by app name.
+// each declared app's outputs repository, by app name; producers returns the app that produces
+// each declared dataset, by dataset.
 // svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares).
 func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
-	outputs func() map[string]string, interval time.Duration, log logging.Logger) {
+	outputs, producers func() map[string]string, interval time.Duration, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -325,7 +353,7 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 		}
 	}
 	for {
-		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, Desired(defaultDataset, outputs()))
+		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, Desired(defaultDataset, outputs(), producers()))
 		for _, ch := range changes {
 			log.Info(ch)
 		}
