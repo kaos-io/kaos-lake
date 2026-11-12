@@ -1,0 +1,5 @@
+Sample notes, file 2 of 2. These lines are made up by the platform and mean nothing.
+A pipeline step that lists the files in this dataset should see four: README.txt,
+sample/measurements.csv, sample/notes-1.txt and sample/notes-2.txt.
+Put your own data in this dataset when you have it, and ignore the files here.
+Nothing here is real, and none of it should be used for anything but a first run.

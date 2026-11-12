@@ -309,7 +309,7 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 		if d.Producer != "" {
 			NoteDataset(d.Name) // it joins the dropdown now
 		}
-		return nil
+		return seed(ctx, c, d, note)
 	} else if err != nil {
 		return err
 	}
@@ -340,7 +340,7 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 		}
 		note("%s is declared again", d.Name)
 	}
-	return nil
+	return seed(ctx, c, d, note)
 }
 
 // labelLocation labels every repository whose storage is under storagePrefix with location.
@@ -437,10 +437,13 @@ func hold(want []Declared, state PeopleState, err error, settle time.Duration, n
 // svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares) and the
 // policy that keeps people from writing produced datasets (ReconcilePeople); a produced dataset is
 // then created only once that policy has named it for longer than settle, the longest a session
-// keeps the policies it read.
+// keeps the policies it read. ret is how long what pipelines leave in produced datasets is kept.
 func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
-	outputs, producers func() map[string]string, interval, settle time.Duration, log logging.Logger) {
+	outputs, producers func() map[string]string, interval, settle time.Duration, ret Retention, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
+	// What killed or cancelled runs left and the versions nobody promoted: on their own schedule,
+	// so that a slow or failing pass never delays creating and protecting repositories.
+	go RunRetention(ctx, c, ret, log)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	shares := func() {

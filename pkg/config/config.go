@@ -600,6 +600,16 @@ type BaseConfig struct {
 			// (pkg/auth/declared, PRD novelcore/kaos#1283 F-08). Empty: none.
 			LegacyRepository string        `mapstructure:"legacy_repository"`
 			Interval         time.Duration `mapstructure:"interval"`
+			// RunBranchTTL is the age after which a run-* branch of a dataset a pipeline produces
+			// is deleted: the branch a killed or cancelled run left. 0: never; otherwise at least
+			// 24h. Default 168h (pkg/kaos/repos, PRD novelcore/kaos#1911 CON-03).
+			RunBranchTTL time.Duration `mapstructure:"run_branch_ttl"`
+			// KeepDays is the age in days after which the k-* tag of a version nothing promoted
+			// is deleted from a dataset a pipeline produces. Default 30; 0: never.
+			KeepDays int `mapstructure:"keep_days"`
+			// RetentionInterval is the time between the passes that apply RunBranchTTL and
+			// KeepDays. At least 5m; default 1h.
+			RetentionInterval time.Duration `mapstructure:"retention_interval"`
 		} `mapstructure:"repositories"`
 		// UI holds settings of the web UI.
 		UI struct {
@@ -793,6 +803,14 @@ func (c *BaseConfig) Validate() error {
 	missingKeys := ValidateMissingRequiredKeys(c, "mapstructure", "squash")
 	if len(missingKeys) > 0 {
 		return fmt.Errorf("%w: %v", ErrMissingRequiredKeys, missingKeys)
+	}
+	// Modified by KAOS: what pipelines leave in produced datasets (pkg/kaos/repos).
+	if r := &c.KAOS.Repositories; r.RunBranchTTL != 0 && r.RunBranchTTL < 24*time.Hour {
+		return fmt.Errorf("%w: kaos.repositories.run_branch_ttl is %s, 0 (never) or at least 24h is required", ErrBadConfiguration, r.RunBranchTTL)
+	} else if r.KeepDays < 0 {
+		return fmt.Errorf("%w: kaos.repositories.keep_days is %d, 0 (never) or more is required", ErrBadConfiguration, r.KeepDays)
+	} else if r.RetentionInterval < 5*time.Minute {
+		return fmt.Errorf("%w: kaos.repositories.retention_interval is %s, at least 5m is required", ErrBadConfiguration, r.RetentionInterval)
 	}
 	return ValidateBlockstore(&c.Blockstore)
 }
