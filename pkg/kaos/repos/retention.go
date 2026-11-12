@@ -29,6 +29,9 @@ type Retention struct {
 	// RunBranchTTL is the age after which a run-* branch is removed; zero: never (a value under
 	// MinRunBranchTTL is refused by the config and by ReconcileRunBranches).
 	RunBranchTTL time.Duration
+	// KeepDays is the age in days after which a version no promotion or other tag keeps loses its
+	// k-* tag; zero: never.
+	KeepDays int
 }
 
 // RetentionCatalog is what the retention passes need of the lakeFS catalog.
@@ -185,4 +188,85 @@ func forEachProduced(ctx context.Context, c Catalog, failed *[]error, fn func(re
 		}
 		return nil
 	})
+}
+
+// ReconcileKeptVersions deletes the k-* tags older than keepDays days from every produced dataset
+// (PRD novelcore/kaos#1911 CON-03): each run's version is kept by one, and one that was never
+// promoted stops being kept after that. A tag stays when its commit is reachable from main (it was
+// promoted, or is part of what main holds, by ancestry or by content) or when a tag that is not a k-* tag points to the same
+// commit (a model, or a name someone gave it). Age is the tagged commit's creation date. Only the
+// tag goes: no object is deleted. keepDays 0 keeps every tag. A failure on one tag or repository
+// does not stop the others.
+func ReconcileKeptVersions(ctx context.Context, c Catalog, h RetentionCatalog, keepDays int, now time.Time) ([]string, error) {
+	if keepDays < 0 {
+		return nil, fmt.Errorf("keep days %d is negative: nothing deleted", keepDays)
+	}
+	if keepDays == 0 {
+		return nil, nil
+	}
+	maxAge := time.Duration(keepDays) * 24 * time.Hour
+	var changes []string
+	var failed []error
+	err := forEachProduced(ctx, c, &failed, func(repo, producer string) {
+		tags, err := allTags(ctx, h, repo)
+		if err != nil {
+			failed = append(failed, fmt.Errorf("repository %s: tags not read, none deleted: %w", repo, err))
+			return
+		}
+		named := map[string]bool{} // commits a tag that is not a k-* tag points to
+		for _, t := range tags {
+			if VersionName(t.ID) {
+				named[t.CommitID] = true
+			}
+		}
+		var main *history
+		for _, t := range tags {
+			if !strings.HasPrefix(t.ID, KeptTagPrefix) || named[t.CommitID] {
+				continue
+			}
+			cm, err := commitOf(ctx, h, repo, t.CommitID)
+			if err != nil {
+				failed = append(failed, fmt.Errorf("repository %s: tag %s: commit not read, kept: %w", repo, t.ID, err))
+				continue
+			}
+			if now.Sub(cm.CreationDate) < maxAge {
+				continue
+			}
+			if main == nil {
+				if main, err = mainHistory(ctx, h, repo); err != nil {
+					failed = append(failed, fmt.Errorf("repository %s: main's history not read, no tag deleted: %w", repo, err))
+					return
+				}
+			}
+			if main.holds(cm) {
+				continue
+			}
+			if err := h.DeleteTag(ctx, repo, t.ID); err != nil && !errors.Is(err, graveler.ErrNotFound) {
+				failed = append(failed, fmt.Errorf("repository %s: tag %s not deleted: %w", repo, t.ID, err))
+				continue
+			}
+			changes = append(changes, fmt.Sprintf("deleted tag %s of %s, a dataset produced by %s: its version is %s old and was never promoted",
+				t.ID, repo, producer, now.Sub(cm.CreationDate).Truncate(time.Hour)))
+		}
+	})
+	if err != nil {
+		failed = append(failed, err)
+	}
+	return changes, errors.Join(failed...)
+}
+
+func allTags(ctx context.Context, h RetentionCatalog, repo string) ([]*catalog.Tag, error) {
+	var tags []*catalog.Tag
+	after := ""
+	for {
+		page, more, err := h.ListTags(ctx, repo, "", retentionPage, after)
+		if err != nil {
+			return nil, err
+		}
+		tags = append(tags, page...)
+		if !more || len(page) == 0 {
+			return tags, nil
+		}
+		after = page[len(page)-1].ID
+	}
 }

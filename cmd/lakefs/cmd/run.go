@@ -251,7 +251,7 @@ var runCmd = &cobra.Command{
 				declaredApps.Outputs, declaredApps.Datasets, r.Interval,
 				// The longest a session keeps the policies it read, and a margin.
 				authCache.TTL+authCache.Jitter+repos.SettleMargin,
-				repos.Retention{RunBranchTTL: r.RunBranchTTL}, logger)
+				repos.Retention{RunBranchTTL: r.RunBranchTTL, KeepDays: r.KeepDays}, logger)
 		}
 
 		// Setup usage reporter - it is no longer possible to disable it

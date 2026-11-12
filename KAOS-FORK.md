@@ -265,6 +265,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
   creation time for a branch and a new branch's head is `main`'s, however old, so a branch with
   neither has no age and is kept. `main`, other branches and other repositories are never touched;
   a failed delete is logged and does not stop the pass. Code: `pkg/kaos/repos/retention.go`.
+- **Versions nobody promoted expire** (PRD novelcore/kaos#1911 CON-03). Each run's version is kept
+  by a tag `k-<run>-<step>-<commit12>`. Every pass of the repositories reconcile deletes, from
+  datasets labelled `kaos.producer`, the `k-*` tags whose commit is older than
+  `kaos.repositories.keep_days` days (default 30; 0: never; per project, set by the project's lake
+  configuration), except a tag whose commit `main` holds (reachable from it, or with the content of
+  one of its commits, so a squash promotion counts) and a tag whose commit another tag that is not
+  a `k-*` tag points to (`latest`, a model, a name someone gave). Only the tag goes; no object is
+  deleted. Code: `pkg/kaos/repos/retention.go`.
 - **A merge may name the head it expects** (PRD novelcore/kaos#1911 F-12, D-05, CON-03).
   `POST /repositories/{repository}/refs/{sourceRef}/merge/{destinationBranch}` takes an optional
   `expected_head`: the full ID of the commit the destination branch must be at. The comparison is

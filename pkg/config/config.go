@@ -604,6 +604,9 @@ type BaseConfig struct {
 			// is deleted: the branch a killed or cancelled run left. At least one hour; default
 			// 24h (pkg/kaos/repos, PRD novelcore/kaos#1911 CON-03).
 			RunBranchTTL time.Duration `mapstructure:"run_branch_ttl"`
+			// KeepDays is the age in days after which the k-* tag of a version nothing promoted
+			// is deleted from a dataset a pipeline produces. Default 30; 0: never.
+			KeepDays int `mapstructure:"keep_days"`
 		} `mapstructure:"repositories"`
 		// UI holds settings of the web UI.
 		UI struct {
@@ -801,6 +804,9 @@ func (c *BaseConfig) Validate() error {
 	// Modified by KAOS: a run still writing must keep its branch (pkg/kaos/repos).
 	if ttl := c.KAOS.Repositories.RunBranchTTL; ttl < time.Hour {
 		return fmt.Errorf("%w: kaos.repositories.run_branch_ttl is %s, at least 1h is required", ErrBadConfiguration, ttl)
+	}
+	if c.KAOS.Repositories.KeepDays < 0 {
+		return fmt.Errorf("%w: kaos.repositories.keep_days is %d, 0 or more is required", ErrBadConfiguration, c.KAOS.Repositories.KeepDays)
 	}
 	return ValidateBlockstore(&c.Blockstore)
 }

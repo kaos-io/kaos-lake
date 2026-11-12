@@ -501,14 +501,23 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 				log.WithError(err).Error("Uncommitted objects on produced datasets not cleared")
 			}
 		}
-		// What killed or cancelled runs left.
-		if h, ok := c.(RetentionCatalog); ok && ret.RunBranchTTL > 0 {
-			changes, err := ReconcileRunBranches(ctx, c, h, ret.RunBranchTTL, time.Now())
+		// What killed or cancelled runs left, and the versions nobody promoted.
+		if h, ok := c.(RetentionCatalog); ok {
+			if ret.RunBranchTTL > 0 {
+				changes, err := ReconcileRunBranches(ctx, c, h, ret.RunBranchTTL, time.Now())
+				for _, ch := range changes {
+					log.Info(ch)
+				}
+				if err != nil {
+					log.WithError(err).Error("Leftover run branches not cleared")
+				}
+			}
+			changes, err := ReconcileKeptVersions(ctx, c, h, ret.KeepDays, time.Now())
 			for _, ch := range changes {
 				log.Info(ch)
 			}
 			if err != nil {
-				log.WithError(err).Error("Leftover run branches not cleared")
+				log.WithError(err).Error("Expired kept versions not cleared")
 			}
 		}
 		shares()

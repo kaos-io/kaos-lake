@@ -142,9 +142,10 @@ func setBaseDefaults(cfgType string) {
 	viper.SetDefault("kaos.workload_identity.key_ttl", time.Hour)
 	// Modified by KAOS: how often the platform's repositories are reapplied (pkg/kaos/repos).
 	viper.SetDefault("kaos.repositories.interval", time.Minute)
-	// Modified by KAOS: a run branch of a produced dataset is deleted after this age, at least 1h
-	// (PRD novelcore/kaos#1911 CON-03).
+	// Modified by KAOS: what pipelines leave in produced datasets is kept this long (PRD
+	// novelcore/kaos#1911 CON-03): run branches (at least 1h), versions nothing promoted (days; 0: never).
 	viper.SetDefault("kaos.repositories.run_branch_ttl", 24*time.Hour)
+	viper.SetDefault("kaos.repositories.keep_days", 30)
 	viper.SetDefault("security.check_latest_version_cache", time.Hour)
 
 	viper.SetDefault("ui.enabled", true)
