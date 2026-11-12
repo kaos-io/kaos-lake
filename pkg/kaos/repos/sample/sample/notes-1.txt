@@ -1,0 +1,5 @@
+Sample notes, file 1 of 2. These lines are made up by the platform and mean nothing.
+Station A recorded fifty readings of temperature, humidity and pressure.
+Each reading is one row in measurements.csv, labelled warm at 22 degrees or above, cool below.
+The readings are synthetic: no instrument produced them and no real place is described.
+Use this file only to check that your pipeline can read text files from the dataset.

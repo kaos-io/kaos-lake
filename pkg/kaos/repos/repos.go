@@ -309,7 +309,7 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 		if d.Producer != "" {
 			NoteDataset(d.Name) // it joins the dropdown now
 		}
-		return nil
+		return seed(ctx, c, d, note)
 	} else if err != nil {
 		return err
 	}
@@ -340,7 +340,7 @@ func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d D
 		}
 		note("%s is declared again", d.Name)
 	}
-	return nil
+	return seed(ctx, c, d, note)
 }
 
 // labelLocation labels every repository whose storage is under storagePrefix with location.
