@@ -18,6 +18,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/graveler"
 	"github.com/treeverse/lakefs/pkg/graveler/settings"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
+	"github.com/treeverse/lakefs/pkg/kv"
 	"github.com/treeverse/lakefs/pkg/kv/kvtest"
 	"github.com/treeverse/lakefs/pkg/kv/mem"
 	"github.com/treeverse/lakefs/pkg/upload"
@@ -26,6 +27,12 @@ import (
 // realCatalog is a lakeFS catalog over in-memory storage: branch protection is enforced by the
 // real core, not a fake.
 func realCatalog(t *testing.T) *catalog.Catalog {
+	t.Helper()
+	return realCatalogOn(t, kvtest.GetStore(context.WithoutCancel(t.Context()), t))
+}
+
+// realCatalogOn is realCatalog over the given key-value store.
+func realCatalogOn(t *testing.T, store kv.Store) *catalog.Catalog {
 	t.Helper()
 	ctx := context.WithoutCancel(t.Context())
 	viper.Reset()
@@ -40,7 +47,7 @@ func realCatalog(t *testing.T) *catalog.Catalog {
 	cfg.Committed.LocalCache.Dir = path.Join(t.TempDir(), "cache")
 	c, err := catalog.New(ctx, catalog.Config{
 		Config:                cfg,
-		KVStore:               kvtest.GetStore(ctx, t),
+		KVStore:               store,
 		SettingsManagerOption: settings.WithCache(cache.NoCache),
 		PathProvider:          upload.DefaultPathProvider,
 	})
@@ -387,4 +394,135 @@ func TestProducedBy_WaitsForEnforcement(t *testing.T) {
 		return ok
 	}, 30*time.Second, 100*time.Millisecond)
 	require.ErrorIs(t, addFile(t, c, "dataset-clean", "main", "late.txt"), graveler.ErrWriteToProtectedBranch, "ready means enforced")
+}
+
+// recordWrites is a key-value store that sees the write of one repository's record, the write that
+// makes the repository exist.
+type recordWrites struct {
+	kv.Store
+	repo string
+	fail error  // when set, the record write fails with it
+	seen func() // called once the record is written, before the writer goes on
+}
+
+func (s *recordWrites) SetIf(ctx context.Context, partitionKey, key, value []byte, pred kv.Predicate) error {
+	if string(partitionKey) != graveler.RepositoriesPartition() || string(key) != graveler.RepoPath(graveler.RepositoryID(s.repo)) {
+		return s.Store.SetIf(ctx, partitionKey, key, value, pred)
+	}
+	if s.fail != nil {
+		return s.fail
+	}
+	err := s.Store.SetIf(ctx, partitionKey, key, value, pred)
+	if err == nil && s.seen != nil {
+		s.seen()
+	}
+	return err
+}
+
+// The labels are written before the record that makes the repository exist. A reader that looks
+// the instant the record is there sees the labels; and a creation that fails at the record, with
+// the labels already written, leaves no repository at all.
+func TestCreateRepositoryWithMetadata_LabelsComeFirst(t *testing.T) {
+	ctx := t.Context()
+	labels := map[string]string{repos.KeyKind: repos.KindDataset, repos.KeyProducer: "yolo"}
+	store := &recordWrites{Store: kvtest.GetStore(context.WithoutCancel(ctx), t), repo: "dataset-clean"}
+	c := realCatalogOn(t, store)
+
+	looked := false
+	store.seen = func() {
+		looked = true
+		md, err := c.GetRepositoryMetadata(ctx, "dataset-clean")
+		require.NoError(t, err, "the repository exists from this write on")
+		require.Equal(t, graveler.RepositoryMetadata(labels), md, "and is never seen without its labels")
+	}
+	_, err := c.CreateRepositoryWithMetadata(ctx, "dataset-clean", "", "mem://dataset-clean", "main", false, labels)
+	require.NoError(t, err)
+	require.True(t, looked)
+
+	// The record write fails: the labels went to a partition no repository points at.
+	store.repo, store.seen, store.fail = "dataset-other", nil, errors.New("store down")
+	_, err = c.CreateRepositoryWithMetadata(ctx, "dataset-other", "", "mem://dataset-other", "main", false, labels)
+	require.ErrorContains(t, err, "store down")
+	_, err = c.GetRepository(ctx, "dataset-other")
+	require.ErrorIs(t, err, graveler.ErrNotFound)
+	_, err = c.GetRepositoryMetadata(ctx, "dataset-other")
+	require.ErrorIs(t, err, graveler.ErrNotFound)
+	// A later creation of the same name starts clean: it gets its own labels, not the lost ones.
+	store.fail = nil
+	_, err = c.CreateRepositoryWithMetadata(ctx, "dataset-other", "", "mem://dataset-other-2", "main", false,
+		map[string]string{repos.KeyKind: repos.KindDataset, repos.KeyProducer: "hera"})
+	require.NoError(t, err)
+	md, err := c.GetRepositoryMetadata(ctx, "dataset-other")
+	require.NoError(t, err)
+	require.Equal(t, "hera", md[repos.KeyProducer])
+}
+
+// PRD novelcore/kaos#1911 CON-03: uncommitted objects on main of a produced dataset (an admin took
+// the protection off, the app uploaded, the protection came back) can be neither committed nor
+// reset by anyone, and block every promotion. The reconcile discards them, and nothing else:
+// not committed data, not another branch, not a dataset people upload.
+func TestReconcileStrays(t *testing.T) {
+	ctx := t.Context()
+	c := realCatalog(t)
+	_, err := repos.Reconcile(ctx, c, "", "mem://lake", "", repos.Desired("", nil, map[string]string{"dataset-clean": "yolo"}))
+	require.NoError(t, err)
+	_, err = repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, err)
+	// A first run, promoted: committed data on main.
+	_, err = c.CreateBranch(ctx, "dataset-clean", "run-a", "main")
+	require.NoError(t, err)
+	require.NoError(t, addFile(t, c, "dataset-clean", "run-a", "images/a.jpg"))
+	_, err = c.Commit(ctx, "dataset-clean", "run-a", "run a", "kaos-app-yolo", nil, nil, nil, false)
+	require.NoError(t, err)
+	_, err = c.Merge(ctx, "dataset-clean", "main", "run-a", "kaos-app-yolo", "promote a", nil, "")
+	require.NoError(t, err)
+	// A second run, staged and committed on its branch, with one more object not committed yet.
+	_, err = c.CreateBranch(ctx, "dataset-clean", "run-b", "main")
+	require.NoError(t, err)
+	require.NoError(t, addFile(t, c, "dataset-clean", "run-b", "images/b.jpg"))
+	_, err = c.Commit(ctx, "dataset-clean", "run-b", "run b", "kaos-app-yolo", nil, nil, nil, false)
+	require.NoError(t, err)
+	require.NoError(t, addFile(t, c, "dataset-clean", "run-b", "images/b-staged.jpg"))
+	// A dataset people upload, with their own uncommitted work on main.
+	newRepo(t, c, "dataset-cars", nil)
+	require.NoError(t, addFile(t, c, "dataset-cars", "main", "theirs.jpg"))
+
+	changes, err := repos.ReconcileStrays(ctx, c, c)
+	require.NoError(t, err)
+	require.Empty(t, changes, "nothing uncommitted on a produced main: nothing to do")
+
+	// An admin takes the protection off; the app uploads to main; the next pass protects again.
+	require.NoError(t, c.SetBranchProtectionRules(ctx, "dataset-clean", &graveler.BranchProtectionRules{}, nil))
+	require.NoError(t, addFile(t, c, "dataset-clean", "main", "stray-1.jpg"))
+	require.NoError(t, addFile(t, c, "dataset-clean", "main", "stray-2.jpg"))
+	require.NoError(t, c.DeleteEntry(ctx, "dataset-clean", "main", "images/a.jpg")) // an uncommitted delete
+	_, err = repos.ReconcileProtection(ctx, c, c)
+	require.NoError(t, err)
+	head, err := c.GetBranchReference(ctx, "dataset-clean", "main")
+	require.NoError(t, err)
+	_, err = c.Merge(ctx, "dataset-clean", "main", "run-b", "kaos-app-yolo", "promote b", nil, "")
+	require.ErrorIs(t, err, graveler.ErrDirtyBranch, "the promotion is blocked")
+	require.ErrorIs(t, c.ResetBranch(ctx, "dataset-clean", "main"), graveler.ErrWriteToProtectedBranch, "and nobody can reset through the API")
+
+	changes, err = repos.ReconcileStrays(ctx, c, c)
+	require.NoError(t, err)
+	require.Equal(t, []string{"discarded 3 uncommitted objects on main of dataset-clean, a dataset produced by yolo: no run wrote them: images/a.jpg, stray-1.jpg, stray-2.jpg"}, changes)
+
+	// main is as committed; the promotion lands; the run branch and the uploaded dataset are untouched.
+	_, err = c.GetEntry(ctx, "dataset-clean", "main", "images/a.jpg", catalog.GetEntryParams{})
+	require.NoError(t, err, "committed data is back in view")
+	_, err = c.GetEntry(ctx, "dataset-clean", "main", "stray-1.jpg", catalog.GetEntryParams{})
+	require.ErrorIs(t, err, graveler.ErrNotFound)
+	after, err := c.GetBranchReference(ctx, "dataset-clean", "main")
+	require.NoError(t, err)
+	require.Equal(t, head, after, "the head of main did not move")
+	_, err = c.GetEntry(ctx, "dataset-clean", "run-b", "images/b-staged.jpg", catalog.GetEntryParams{})
+	require.NoError(t, err, "a run branch keeps what it staged")
+	_, err = c.GetEntry(ctx, "dataset-cars", "main", "theirs.jpg", catalog.GetEntryParams{})
+	require.NoError(t, err, "uncommitted work on an uploaded dataset stays")
+	_, err = c.Merge(ctx, "dataset-clean", "main", "run-b", "kaos-app-yolo", "promote b", nil, "")
+	require.NoError(t, err, "with main clean again the promotion lands")
+	again, err := repos.ReconcileStrays(ctx, c, c)
+	require.NoError(t, err)
+	require.Empty(t, again)
 }

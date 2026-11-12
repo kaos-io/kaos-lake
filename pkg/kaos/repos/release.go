@@ -35,11 +35,11 @@ func ReleaseTag(repo, tag string) bool {
 // ErrNumberedVersion refuses a vN tag on a dataset a pipeline produces.
 var ErrNumberedVersion = errors.New("a dataset a pipeline produces has commits, latest and names; vN is for datasets people upload")
 
-// ValidateTag checks a tag a caller creates on a repository labelled md. A dataset a pipeline
+// ValidateTag checks a tag a caller creates on repository repo, labelled md. A dataset a pipeline
 // produces takes no numbered release (PRD novelcore/kaos#1911 D-03).
-func ValidateTag(md map[string]string, tag string) error {
+func ValidateTag(repo string, md map[string]string, tag string) error {
 	if md[KeyProducer] != "" && VersionTag.MatchString(tag) {
-		return fmt.Errorf("%w: %s is produced by %s, name the version instead", ErrNumberedVersion, tag, md[KeyProducer])
+		return fmt.Errorf("%w: %s is produced by %s, name the version instead of tagging it %s", ErrNumberedVersion, repo, md[KeyProducer], tag)
 	}
 	return nil
 }

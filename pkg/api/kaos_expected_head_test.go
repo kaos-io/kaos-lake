@@ -18,6 +18,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/config"
 	"github.com/treeverse/lakefs/pkg/graveler"
+	"github.com/treeverse/lakefs/pkg/kaos/repos"
 )
 
 // runBranch gives repo a branch off main's current head with one committed file of its own, as a
@@ -262,8 +263,9 @@ func TestController_MergePullRequestIntoProducedDatasetRefused(t *testing.T) {
 }
 
 // A produced dataset's main that holds uncommitted objects takes no promotion (lakeFS refuses to
-// merge into a dirty branch). No run stages on main, so the refusal says what it is and who can
-// clear it, instead of the bare "dirty branch" other repositories get.
+// merge into a dirty branch). No run stages on main, so the refusal says what it is and that the
+// platform clears it, instead of the bare "dirty branch" other repositories get. Once the
+// repositories reconcile has cleared it, the same merge lands.
 func TestController_MergeIntoDirtyProducedMainSaysWhy(t *testing.T) {
 	clt, deps := setupClientWithAdmin(t)
 	ctx := t.Context()
@@ -283,10 +285,19 @@ func TestController_MergeIntoDirtyProducedMainSaysWhy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode(), string(resp.Body))
 	require.Contains(t, resp.JSON400.Message, "main of dataset-clean, a dataset produced by yolo, holds uncommitted objects that no run wrote")
-	require.Contains(t, resp.JSON400.Message, "an admin must reset main")
+	require.Contains(t, resp.JSON400.Message, "the platform clears them within a minute, try again")
 	require.Equal(t, head, mainHead(t, deps, produced))
 
-	// A dataset people upload keeps lakeFS's own answer.
+	// The reconcile's next pass clears main; the same merge, with the same head, lands.
+	changes, err := repos.ReconcileStrays(ctx, deps.catalog, deps.catalog)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	require.Contains(t, changes[0], "stray.jpg")
+	resp, err = clt.MergeIntoBranchWithResponse(ctx, produced, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{ExpectedHead: &head})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode(), string(resp.Body))
+
+	// A dataset people upload keeps lakeFS's own answer, and its uncommitted object.
 	resp, err = clt.MergeIntoBranchWithResponse(ctx, uploaded, "run-a", "main", apigen.MergeIntoBranchJSONRequestBody{})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode())

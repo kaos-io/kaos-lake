@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -143,6 +144,8 @@ type Declared struct {
 	App      string // the outputs' app; empty for a dataset
 	Default  bool   // the project's default dataset
 	Producer string // the app that produces the dataset; empty for a dataset people write
+	// Hold, when not empty, is why a repository that does not exist is not created in this pass.
+	Hold string
 }
 
 // Labels are the declared repository's `kaos.` metadata.
@@ -291,6 +294,10 @@ func notAdoptable(d Declared, md graveler.RepositoryMetadata) string {
 
 func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d Declared, note func(string, ...any)) error {
 	_, err := c.GetRepository(ctx, d.Name)
+	if errors.Is(err, graveler.ErrNotFound) && d.Hold != "" {
+		note("%s is declared and not created yet: %s", d.Name, d.Hold)
+		return nil
+	}
 	if errors.Is(err, graveler.ErrNotFound) {
 		// Created with its labels: it never exists without them, so a repository found without
 		// them below was not made here.
@@ -396,13 +403,43 @@ func DeclaredProducer(name string) (string, bool) {
 	return app, ok
 }
 
+// SettleMargin is added to the longest a session keeps the policies it read (the auth cache's TTL
+// and jitter) before a produced dataset is created: clock differences between replicas and the
+// time a policy write takes to land.
+const SettleMargin = 10 * time.Second
+
+// hold keeps Reconcile from creating the produced datasets of want that people could still write
+// in the instant they appear: those ProducedPolicy has not named for longer than settle (state,
+// err: what ReconcilePeople answered). It returns when the earliest of them may be created; zero
+// when none waits on time.
+func hold(want []Declared, state PeopleState, err error, settle time.Duration, now time.Time) time.Time {
+	var next time.Time
+	for i := range want {
+		d := &want[i]
+		switch {
+		case d.Producer == "" || state.Closed(d.Name, settle, now):
+		case err != nil || !slices.Contains(state.Listed, d.Name):
+			d.Hold = "the rule that keeps people from writing it is not in place"
+		default:
+			at := state.Since.Add(settle)
+			d.Hold = fmt.Sprintf("people's sessions get the rule that keeps them from writing it first; it is created after %s", at.UTC().Format(time.RFC3339))
+			if next.IsZero() || at.Before(next) {
+				next = at
+			}
+		}
+	}
+	return next
+}
+
 // Run reconciles the declared repositories now and every interval until ctx ends. outputs returns
 // each declared app's outputs repository, by app name; producers returns the app that produces
 // each declared dataset, by dataset.
 // svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares) and the
-// policy that keeps people from writing produced datasets (ReconcilePeople).
+// policy that keeps people from writing produced datasets (ReconcilePeople); a produced dataset is
+// then created only once that policy has named it for longer than settle, the longest a session
+// keeps the policies it read.
 func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
-	outputs, producers func() map[string]string, interval time.Duration, log logging.Logger) {
+	outputs, producers func() map[string]string, interval, settle time.Duration, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -418,28 +455,31 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 			log.WithError(err).Error("Dataset shares not applied")
 		}
 	}
-	people := func() {
-		if svc == nil {
-			return
-		}
-		changes, err := ReconcilePeople(ctx, c, svc)
-		for _, ch := range changes {
-			log.Info(ch)
-		}
-		if err != nil {
-			log.WithError(err).Error("Produced datasets not closed to people")
-		}
-	}
 	for {
-		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, Desired(defaultDataset, outputs(), producers()))
+		declared := producers()
+		want := Desired(defaultDataset, outputs(), declared)
+		// People are kept out of a produced dataset before it exists: the policy names it first,
+		// and it is created only when no session can still hold the policy without it.
+		var wake <-chan time.Time
+		if svc != nil {
+			state, changes, err := ReconcilePeople(ctx, c, svc, slices.Sorted(maps.Keys(declared)))
+			for _, ch := range changes {
+				log.Info(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Produced datasets not closed to people")
+			}
+			if next := hold(want, state, err, settle, time.Now()); !next.IsZero() {
+				wake = time.After(time.Until(next) + time.Second)
+			}
+		}
+		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, want)
 		for _, ch := range changes {
 			log.Info(ch)
 		}
 		if err != nil {
 			log.WithError(err).Error("Declared repositories not applied")
 		}
-		// People stop writing a produced dataset in the pass that labels it.
-		people()
 		// A dataset's main changes only through a merge. Done after labelling, so the label that
 		// the New dataset flow sets last (after its first commit to main) is what starts it.
 		if p, ok := c.(ProtectionCatalog); ok {
@@ -451,6 +491,16 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 				log.WithError(err).Error("Dataset branch protection not applied")
 			}
 		}
+		// Nothing stages on a produced dataset's main; what is there blocks every promotion.
+		if h, ok := c.(StrayCatalog); ok {
+			changes, err := ReconcileStrays(ctx, c, h)
+			for _, ch := range changes {
+				log.Warn(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Uncommitted objects on produced datasets not cleared")
+			}
+		}
 		shares()
 	wait:
 		for {
@@ -459,6 +509,8 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 				return
 			case <-ticker.C:
 				break wait
+			case <-wake:
+				break wait // a held dataset may be created now
 			case <-kicks:
 				// A dataset was just shared or unshared (Kick): apply it now, not at the next tick.
 				shares()
