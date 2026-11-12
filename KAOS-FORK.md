@@ -80,7 +80,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `kaos.repositories.storage_namespace_prefix` set, the project's default dataset
   (`kaos.repositories.default_dataset`) and each declared app's `outputs_repository` are created
   and relabelled every `kaos.repositories.interval`; an undeclared outputs repository is labelled
-  `kaos.orphaned` and never deleted. The metadata API refuses labels that break the naming rules.
+  `kaos.orphaned` and never deleted. The default dataset is given a small synthetic sample once
+  (`README.txt`, `sample/measurements.csv`, `sample/notes-1.txt`, `sample/notes-2.txt`, under 100
+  KB, embedded in `pkg/kaos/repos/sample`), so an app made from the starter template runs as it is:
+  only while `main` still is the initial commit, holds no object and no branch but a crashed
+  attempt's `kaos-seed-sample`; never a produced dataset. It is staged on that branch and merged
+  into `main` with the expected head (squash), so it lands with protection on and two replicas
+  leave one commit (message `kaos: sample data so a new project's default dataset runs as it is`,
+  commit metadata `kaos.seed=sample-v1`). Code: `pkg/kaos/repos/seed.go`. The metadata API refuses labels that break the naming rules.
   With `kaos.repositories.location` set, every repository under the prefix is labelled
   `kaos.location` (a platform key). `kaos.shared_with` (projects that may read a dataset) is
   validated and needs the delete-repository right, so only the project's admins share. Editors
