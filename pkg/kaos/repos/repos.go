@@ -437,9 +437,9 @@ func hold(want []Declared, state PeopleState, err error, settle time.Duration, n
 // svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares) and the
 // policy that keeps people from writing produced datasets (ReconcilePeople); a produced dataset is
 // then created only once that policy has named it for longer than settle, the longest a session
-// keeps the policies it read.
+// keeps the policies it read. ret is how long what pipelines leave in produced datasets is kept.
 func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
-	outputs, producers func() map[string]string, interval, settle time.Duration, log logging.Logger) {
+	outputs, producers func() map[string]string, interval, settle time.Duration, ret Retention, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -499,6 +499,16 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 			}
 			if err != nil {
 				log.WithError(err).Error("Uncommitted objects on produced datasets not cleared")
+			}
+		}
+		// What killed or cancelled runs left.
+		if h, ok := c.(RetentionCatalog); ok && ret.RunBranchTTL > 0 {
+			changes, err := ReconcileRunBranches(ctx, c, h, ret.RunBranchTTL, time.Now())
+			for _, ch := range changes {
+				log.Info(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Leftover run branches not cleared")
 			}
 		}
 		shares()

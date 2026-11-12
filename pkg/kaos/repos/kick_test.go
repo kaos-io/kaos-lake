@@ -33,7 +33,7 @@ func TestRun_KickAppliesSharesNow(t *testing.T) {
 	go func() {
 		defer close(done)
 		repos.Run(ctx, f, svc, "", "gs://kaos-e2e-lakefs/", "", "", func() map[string]string { return nil },
-			func() map[string]string { return nil }, time.Hour, 0, logging.ContextUnavailable())
+			func() map[string]string { return nil }, time.Hour, 0, repos.Retention{}, logging.ContextUnavailable())
 	}()
 	hasGroup := func(project string) bool {
 		_, err := svc.GetGroup(ctx, repos.ConsumerGroupPrefix+project)

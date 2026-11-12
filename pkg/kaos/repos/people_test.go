@@ -222,7 +222,7 @@ func TestRun_PeopleAreKeptOutBeforeTheDatasetExists(t *testing.T) {
 	go func() {
 		defer close(done)
 		repos.Run(ctx, f, svc, "", prefix, "", "", func() map[string]string { return nil },
-			func() map[string]string { return *declared.Load() }, 50*time.Millisecond, settle, logging.ContextUnavailable())
+			func() map[string]string { return *declared.Load() }, 50*time.Millisecond, settle, repos.Retention{}, logging.ContextUnavailable())
 	}()
 	writes := func() bool {
 		return can(t, svc, "dev@example.com", permissions.WriteObjectAction, permissions.ObjectArn("dataset-new", "people.jpg")) ||
@@ -276,7 +276,7 @@ func TestRun_RestartBetweenListingAndCreating(t *testing.T) {
 		go func() {
 			defer close(done)
 			repos.Run(ctx, f, svc, "", prefix, "", "", func() map[string]string { return nil }, declared,
-				50*time.Millisecond, settle, logging.ContextUnavailable())
+				50*time.Millisecond, settle, repos.Retention{}, logging.ContextUnavailable())
 		}()
 		return done
 	}

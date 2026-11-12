@@ -256,6 +256,15 @@ To release, open a pull request that bumps `kaos/VERSION`.
   others are protected and every failure is logged. Outputs repositories are not protected. Editors (Developers) lack
   `branches:SetBranchProtectionRules`, so only Admins change rules. Between a dataset's label and the
   next pass main is open for up to one interval. Code: `pkg/kaos/repos/protect.go`.
+- **Leftover run branches are removed** (PRD novelcore/kaos#1911 CON-03). A pipeline step writes on
+  a `run-*` branch and deletes it when it finishes or fails in a way it catches; a killed pod or a
+  cancelled run leaves the branch and the objects staged on it. Every pass of the repositories
+  reconcile deletes the `run-*` branches of datasets labelled `kaos.producer` that nothing has
+  written to for `kaos.repositories.run_branch_ttl` (default 24h; the config refuses less than 1h).
+  A branch's age is the newest of its own head commit and its uncommitted objects: lakeFS keeps no
+  creation time for a branch and a new branch's head is `main`'s, however old, so a branch with
+  neither has no age and is kept. `main`, other branches and other repositories are never touched;
+  a failed delete is logged and does not stop the pass. Code: `pkg/kaos/repos/retention.go`.
 - **A merge may name the head it expects** (PRD novelcore/kaos#1911 F-12, D-05, CON-03).
   `POST /repositories/{repository}/refs/{sourceRef}/merge/{destinationBranch}` takes an optional
   `expected_head`: the full ID of the commit the destination branch must be at. The comparison is

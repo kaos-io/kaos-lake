@@ -250,7 +250,8 @@ var runCmd = &cobra.Command{
 			go repos.Run(ctx, c, shares, r.StorageID, r.StorageNamespacePrefix, r.Location, r.DefaultDataset,
 				declaredApps.Outputs, declaredApps.Datasets, r.Interval,
 				// The longest a session keeps the policies it read, and a margin.
-				authCache.TTL+authCache.Jitter+repos.SettleMargin, logger)
+				authCache.TTL+authCache.Jitter+repos.SettleMargin,
+				repos.Retention{RunBranchTTL: r.RunBranchTTL}, logger)
 		}
 
 		// Setup usage reporter - it is no longer possible to disable it
