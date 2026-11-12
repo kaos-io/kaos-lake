@@ -441,6 +441,9 @@ func hold(want []Declared, state PeopleState, err error, settle time.Duration, n
 func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
 	outputs, producers func() map[string]string, interval, settle time.Duration, ret Retention, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
+	// What killed or cancelled runs left and the versions nobody promoted: on their own schedule,
+	// so that a slow or failing pass never delays creating and protecting repositories.
+	go RunRetention(ctx, c, ret, log)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	shares := func() {
@@ -499,25 +502,6 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 			}
 			if err != nil {
 				log.WithError(err).Error("Uncommitted objects on produced datasets not cleared")
-			}
-		}
-		// What killed or cancelled runs left, and the versions nobody promoted.
-		if h, ok := c.(RetentionCatalog); ok {
-			if ret.RunBranchTTL > 0 {
-				changes, err := ReconcileRunBranches(ctx, c, h, ret.RunBranchTTL, time.Now())
-				for _, ch := range changes {
-					log.Info(ch)
-				}
-				if err != nil {
-					log.WithError(err).Error("Leftover run branches not cleared")
-				}
-			}
-			changes, err := ReconcileKeptVersions(ctx, c, h, ret.KeepDays, time.Now())
-			for _, ch := range changes {
-				log.Info(ch)
-			}
-			if err != nil {
-				log.WithError(err).Error("Expired kept versions not cleared")
 			}
 		}
 		shares()

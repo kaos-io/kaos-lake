@@ -143,9 +143,11 @@ func setBaseDefaults(cfgType string) {
 	// Modified by KAOS: how often the platform's repositories are reapplied (pkg/kaos/repos).
 	viper.SetDefault("kaos.repositories.interval", time.Minute)
 	// Modified by KAOS: what pipelines leave in produced datasets is kept this long (PRD
-	// novelcore/kaos#1911 CON-03): run branches (at least 1h), versions nothing promoted (days; 0: never).
-	viper.SetDefault("kaos.repositories.run_branch_ttl", 24*time.Hour)
+	// novelcore/kaos#1911 CON-03): a run branch 7 days (0: never, else at least 24h), a version
+	// nothing promoted 30 days (0: never); the passes run hourly (at least 5m).
+	viper.SetDefault("kaos.repositories.run_branch_ttl", 168*time.Hour)
 	viper.SetDefault("kaos.repositories.keep_days", 30)
+	viper.SetDefault("kaos.repositories.retention_interval", time.Hour)
 	viper.SetDefault("security.check_latest_version_cache", time.Hour)
 
 	viper.SetDefault("ui.enabled", true)

@@ -5,6 +5,7 @@ package repos_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -236,16 +237,96 @@ func TestSeed_NeverAProducedDataset(t *testing.T) {
 
 func TestSeed_CrashedAttemptIsCleanedAndSeeded(t *testing.T) {
 	c := realCatalog(t)
+	// What a crashed attempt leaves: some of the sample's own files, staged, then committed.
+	good := realCatalog(t)
+	require.NoError(t, reconcileDefault(t, good))
 	declareEmpty(t, c, def, defaultLabels)
 	_, err := c.CreateBranch(t.Context(), def, "kaos-seed-sample", "main")
 	require.NoError(t, err)
-	require.NoError(t, addFile(t, c, def, "kaos-seed-sample", "stray.txt"))
-	_, err = c.Commit(t.Context(), def, "kaos-seed-sample", "half", "kaos-lake", nil, nil, nil, false)
-	require.NoError(t, err)
-
+	for _, p := range []string{"README.txt", "sample/notes-1.txt"} {
+		require.NoError(t, c.PutObject(t.Context(), def, "kaos-seed-sample", p, []byte(read(t, good, def, p)), "text/plain"))
+	}
 	require.NoError(t, reconcileDefault(t, c))
 	requireSeeded(t, c, def)
-	require.NotContains(t, mainPaths(t, c, def), "stray.txt")
+
+	// Committed once on the branch before the crash: the same.
+	c2 := realCatalog(t)
+	declareEmpty(t, c2, def, defaultLabels)
+	_, err = c2.CreateBranch(t.Context(), def, "kaos-seed-sample", "main")
+	require.NoError(t, err)
+	require.NoError(t, c2.PutObject(t.Context(), def, "kaos-seed-sample", "README.txt", []byte(read(t, good, def, "README.txt")), "text/plain"))
+	_, err = c2.Commit(t.Context(), def, "kaos-seed-sample", "half", "kaos-lake", nil, nil, nil, false)
+	require.NoError(t, err)
+	require.NoError(t, reconcileDefault(t, c2))
+	requireSeeded(t, c2, def)
+}
+
+// A person may create a branch named like the seed's. It is removed only when it is provably the
+// seed's own; anything else on it, and the default dataset is left alone, with its objects.
+// mineCount makes a dataset name of its own for each case, also when the tests run twice in a process.
+var mineCount atomic.Int32
+
+func TestSeed_APersonsBranchOfTheSeedsNameIsNeverDeleted(t *testing.T) {
+	for name, stage := range map[string]func(t *testing.T, c *catalog.Catalog, mine string){
+		"their own file": func(t *testing.T, c *catalog.Catalog, mine string) {
+			require.NoError(t, addFile(t, c, mine, "kaos-seed-sample", "theirs.txt"))
+		},
+		"a sample file with other content": func(t *testing.T, c *catalog.Catalog, mine string) {
+			require.NoError(t, c.PutObject(t.Context(), mine, "kaos-seed-sample", "README.txt", []byte("mine, not the sample"), "text/plain"))
+		},
+		"their file, committed": func(t *testing.T, c *catalog.Catalog, mine string) {
+			require.NoError(t, addFile(t, c, mine, "kaos-seed-sample", "theirs.txt"))
+			_, err := c.Commit(t.Context(), mine, "kaos-seed-sample", "theirs", "someone", nil, nil, nil, false)
+			require.NoError(t, err)
+		},
+	} {
+		mine := fmt.Sprintf("dataset-mine-%d", mineCount.Add(1)) // the refusal is logged once per dataset name per process
+		t.Run(name, func(t *testing.T) {
+			c := realCatalog(t)
+			declareEmpty(t, c, mine, defaultLabels)
+			_, err := c.CreateBranch(t.Context(), mine, "kaos-seed-sample", "main")
+			require.NoError(t, err)
+			stage(t, c, mine)
+			want := repos.Desired(mine, nil, nil)
+			changes, err := repos.Reconcile(t.Context(), c, "", "mem://lake", "", want)
+			require.NoError(t, err)
+			require.NotEmpty(t, changes, "the refusal is logged")
+			require.Contains(t, changes[len(changes)-1], "kaos-seed-sample")
+			require.ElementsMatch(t, []string{"main", "kaos-seed-sample"}, branchNames(t, c, mine))
+			require.Empty(t, mainPaths(t, c, mine))
+			diff, _, err := c.ListEntries(t.Context(), mine, "kaos-seed-sample", "", "", "", 10)
+			require.NoError(t, err)
+			require.NotEmpty(t, diff, "their objects are still there")
+			require.Zero(t, seedCommits(t, c, mine))
+			// Logged once, not at every pass.
+			changes, err = repos.Reconcile(t.Context(), c, "", "mem://lake", "", want)
+			require.NoError(t, err)
+			require.Empty(t, changes)
+		})
+	}
+}
+
+// A default dataset whose branch is not main is not the seed's to fill.
+func TestSeed_NoMainNoSample(t *testing.T) {
+	c := realCatalog(t)
+	_, err := c.CreateRepositoryWithMetadata(t.Context(), def, "", "mem://lake/"+def, "trunk", false, defaultLabels)
+	require.NoError(t, err)
+	require.NoError(t, reconcileDefault(t, c))
+	require.Equal(t, []string{"trunk"}, branchNames(t, c, def))
+	entries, _, err := c.ListEntries(t.Context(), def, "trunk", "", "", "", 10)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestSeed_ContentTypesAreSet(t *testing.T) {
+	c := realCatalog(t)
+	require.NoError(t, reconcileDefault(t, c))
+	for p, want := range map[string]string{
+		"README.txt": "text/plain; charset=utf-8", "sample/notes-1.txt": "text/plain; charset=utf-8", "sample/measurements.csv": "text/csv"} {
+		e, err := c.GetEntry(t.Context(), def, "main", p, catalog.GetEntryParams{})
+		require.NoError(t, err)
+		require.Equal(t, want, e.ContentType, p)
+	}
 }
 
 // failing makes the catalog fail one way, for as long as on is set.

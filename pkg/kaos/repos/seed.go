@@ -4,14 +4,16 @@ package repos
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // the checksum lakeFS writes for an upload; not a security use
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
-	"mime"
 	"path"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/graveler"
@@ -22,8 +24,9 @@ const (
 	KeySeed = "kaos.seed"
 	// SeedSample is KeySeed's value: the sample's version.
 	SeedSample = "sample-v1"
-	// seedBranch is the platform's own branch the sample is staged and committed on. It is not a
-	// run-* branch (those belong to pipelines) and no person or app has the right to create it.
+	// seedBranch is the branch the sample is staged and committed on. It is not a run-* branch
+	// (those belong to pipelines). Nothing stops a person creating a branch of that name, so one
+	// is removed only when it is provably the seed's own (ownSeedBranch).
 	seedBranch  = "kaos-seed-sample"
 	seedMessage = "kaos: sample data so a new project's default dataset runs as it is"
 	// seedCommitter is the identity of the platform's own commits.
@@ -74,9 +77,12 @@ func sampleFiles() ([]sampleFile, error) {
 		if err != nil {
 			return err
 		}
-		ct := mime.TypeByExtension(path.Ext(p))
-		if ct == "" {
-			ct = catalog.DefaultContentType
+		ct := catalog.DefaultContentType
+		switch path.Ext(p) { // not the host's mime table
+		case ".txt":
+			ct = "text/plain; charset=utf-8"
+		case ".csv":
+			ct = "text/csv"
 		}
 		files = append(files, sampleFile{path: strings.TrimPrefix(p, "sample/"), content: content, contentType: ct})
 		return nil
@@ -89,7 +95,8 @@ func sampleFiles() ([]sampleFile, error) {
 // and does nothing, now and on every later pass, otherwise:
 //   - d is the declared default dataset and no pipeline produces it;
 //   - main is the store's initial commit (no parent), holds no object, committed or staged;
-//   - the only branches are main and, from a crashed earlier attempt, seedBranch.
+//   - the only branches are main and, from a crashed earlier attempt, seedBranch (and only when
+//     it is provably the seed's own: ownSeedBranch).
 //
 // The sample goes through a branch and a squash merge, so it lands whether or not main is
 // protected (a merge is not a direct write) and main gets one commit, the sample's. The merge names main's head as it was read: two attempts at
@@ -115,7 +122,14 @@ func seedDefault(ctx context.Context, c SeedCatalog, d Declared, note func(strin
 	if err != nil {
 		return err
 	}
-	if leftover {
+	if leftover != nil {
+		if !ownSeedBranch(ctx, c, d.Name, head, leftover, files) {
+			// Someone else's branch: the dataset is not the seed's to fill, now or later.
+			if _, logged := seedRefused.LoadOrStore(d.Name, true); !logged {
+				note("%s is left without the sample: it has a branch %s that is not the platform's own", d.Name, seedBranch)
+			}
+			return nil
+		}
 		if err := c.DeleteBranch(ctx, d.Name, seedBranch); err != nil && !errors.Is(err, graveler.ErrNotFound) {
 			return fmt.Errorf("sample: remove the branch %s a crashed attempt left: %w", seedBranch, err)
 		}
@@ -137,12 +151,15 @@ func seedDefault(ctx context.Context, c SeedCatalog, d Declared, note func(strin
 	return stageAndMerge(ctx, c, d.Name, head, files, note)
 }
 
+// seedRefused is the datasets whose refusal has been logged: once per process, not every pass.
+var seedRefused sync.Map
+
 // untouched returns main's head when main still is the initial commit, empty and alone; empty
-// when anything else is there. leftover is whether seedBranch exists.
-func untouched(ctx context.Context, c SeedCatalog, repo string) (head string, leftover bool, err error) {
+// when anything else is there. leftover is the branch seedBranch when it exists.
+func untouched(ctx context.Context, c SeedCatalog, repo string) (head string, leftover *catalog.Branch, err error) {
 	branches, more, err := c.ListBranches(ctx, repo, "", 10, "")
 	if err != nil || more {
-		return "", false, err
+		return "", nil, err
 	}
 	hasMain := false
 	for _, b := range branches {
@@ -150,23 +167,52 @@ func untouched(ctx context.Context, c SeedCatalog, repo string) (head string, le
 		case defaultBranch:
 			hasMain = true
 		case seedBranch:
-			leftover = true
+			leftover = b
 		default:
-			return "", false, nil
+			return "", nil, nil
 		}
 	}
 	if !hasMain {
-		return "", false, nil
+		return "", nil, nil
 	}
 	commit, err := c.GetCommit(ctx, repo, defaultBranch)
 	if err != nil || len(commit.Parents) != 0 {
-		return "", false, err
+		return "", nil, err
 	}
 	entries, _, err := c.ListEntries(ctx, repo, defaultBranch, "", "", "", 1)
 	if err != nil || len(entries) != 0 {
-		return "", false, err
+		return "", nil, err
 	}
 	return commit.Reference, leftover, nil
+}
+
+// ownSeedBranch reports whether the existing branch seedBranch of repo is provably the seed's own,
+// left by an attempt that did not finish: it starts at main's initial commit (is it, or one
+// commit on it) and everything on it, committed or staged, is a file of the sample with the
+// sample's size and checksum. A branch that holds anything else, or that does not start there,
+// is someone's.
+func ownSeedBranch(ctx context.Context, c SeedCatalog, repo, head string, b *catalog.Branch, files []sampleFile) bool {
+	if b.Reference != head {
+		commit, err := c.GetCommit(ctx, repo, b.Reference)
+		if err != nil || len(commit.Parents) != 1 || commit.Parents[0] != head {
+			return false
+		}
+	}
+	entries, more, err := c.ListEntries(ctx, repo, seedBranch, "", "", "", len(files)+1)
+	if err != nil || more || len(entries) > len(files) {
+		return false
+	}
+	for _, e := range entries {
+		i := slices.IndexFunc(files, func(f sampleFile) bool { return f.path == e.Path })
+		if i < 0 {
+			return false
+		}
+		sum := md5.Sum(files[i].content) //nolint:gosec // see import
+		if e.Size != int64(len(files[i].content)) || e.Checksum != hex.EncodeToString(sum[:]) {
+			return false
+		}
+	}
+	return true
 }
 
 func stageAndMerge(ctx context.Context, c SeedCatalog, repo, head string, files []sampleFile, note func(string, ...any)) error {

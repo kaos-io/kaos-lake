@@ -84,7 +84,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
   (`README.txt`, `sample/measurements.csv`, `sample/notes-1.txt`, `sample/notes-2.txt`, under 100
   KB, embedded in `pkg/kaos/repos/sample`), so an app made from the starter template runs as it is:
   only while `main` still is the initial commit, holds no object and no branch but a crashed
-  attempt's `kaos-seed-sample`; never a produced dataset. It is staged on that branch and merged
+  attempt's `kaos-seed-sample` (removed only when it provably is the seed's: it starts at that
+  commit and holds nothing but sample files with the sample's size and checksum; any other branch of
+  that name leaves the dataset without the sample, logged once); never a produced dataset. It is staged on that branch and merged
   into `main` with the expected head (squash), so it lands with protection on and two replicas
   leave one commit (message `kaos: sample data so a new project's default dataset runs as it is`,
   commit metadata `kaos.seed=sample-v1`). Code: `pkg/kaos/repos/seed.go`. The metadata API refuses labels that break the naming rules.
@@ -258,21 +260,33 @@ To release, open a pull request that bumps `kaos/VERSION`.
   next pass main is open for up to one interval. Code: `pkg/kaos/repos/protect.go`.
 - **Leftover run branches are removed** (PRD novelcore/kaos#1911 CON-03). A pipeline step writes on
   a `run-*` branch and deletes it when it finishes or fails in a way it catches; a killed pod or a
-  cancelled run leaves the branch and the objects staged on it. Every pass of the repositories
-  reconcile deletes the `run-*` branches of datasets labelled `kaos.producer` that nothing has
-  written to for `kaos.repositories.run_branch_ttl` (default 24h; the config refuses less than 1h).
-  A branch's age is the newest of its own head commit and its uncommitted objects: lakeFS keeps no
-  creation time for a branch and a new branch's head is `main`'s, however old, so a branch with
-  neither has no age and is kept. `main`, other branches and other repositories are never touched;
-  a failed delete is logged and does not stop the pass. Code: `pkg/kaos/repos/retention.go`.
+  cancelled run leaves the branch and the objects staged on it. A pass of the retention loop
+  deletes the `run-*` branches of datasets labelled `kaos.producer` that nothing has written to for
+  `kaos.repositories.run_branch_ttl` (default 168h; 0: never; otherwise at least 24h, the config
+  refuses less: a living run branch is one whose upload is in progress). A branch's age is the
+  newest of its own head commit and its uncommitted objects, so a step that keeps staging keeps its
+  branch; lakeFS keeps no creation time for a branch and a new branch's head is `main`'s, however
+  old, so a branch with neither has no age and is kept. `main`, other branches and other
+  repositories are never touched; at most 200 branches go from a repository per pass; a failed
+  delete is logged and does not stop the pass. A client that writes on a deleted branch gets
+  not found. The log names the repository, the branch, the commit it was at, the age and the rule.
+  Code: `pkg/kaos/repos/retention.go`.
 - **Versions nobody promoted expire** (PRD novelcore/kaos#1911 CON-03). Each run's version is kept
-  by a tag `k-<run>-<step>-<commit12>`. Every pass of the repositories reconcile deletes, from
-  datasets labelled `kaos.producer`, the `k-*` tags whose commit is older than
-  `kaos.repositories.keep_days` days (default 30; 0: never; per project, set by the project's lake
-  configuration), except a tag whose commit `main` holds (reachable from it, or with the content of
-  one of its commits, so a squash promotion counts) and a tag whose commit another tag that is not
-  a `k-*` tag points to (`latest`, a model, a name someone gave). Only the tag goes; no object is
-  deleted. Code: `pkg/kaos/repos/retention.go`.
+  by a tag `k-<YYYYMMDDTHHMMSSZ>-<run>-<step>-<commit12>` (UTC time of sealing; the old form
+  `k-<run>-<step>-<commit12>` is as old as its commit). A pass of the retention loop deletes, from
+  datasets labelled `kaos.producer`, the `k-*` tags older than `kaos.repositories.keep_days` days
+  by the time in their name (default 30; 0: never; set per project by the project's lake
+  configuration), except a tag whose commit `main` holds (reachable from it, with the content of
+  one of its commits, or named by the `kaos.promoted` metadata of one of its commits: the full ID of
+  the sealed commit a promotion merged) and a tag whose commit another tag that is not a `k-*` tag
+  points to (`latest`, a model, a name someone gave). Only the tag goes; no object is deleted. No
+  commit is read for a tag whose name says it is not old; `main`'s history is read once, in one
+  call for up to 10000 commits, and only when an expired tag exists; per repository and pass at
+  most 200 tags are deleted and 500 commits read, the rest follows at the next pass. The log names
+  the repository, the tag, the commit, the age and the rule.
+- **Retention runs on its own schedule.** The two passes above run every
+  `kaos.repositories.retention_interval` (default 1h, at least 5m), on their own, so that they never
+  delay creating and protecting repositories.
 - **A merge may name the head it expects** (PRD novelcore/kaos#1911 F-12, D-05, CON-03).
   `POST /repositories/{repository}/refs/{sourceRef}/merge/{destinationBranch}` takes an optional
   `expected_head`: the full ID of the commit the destination branch must be at. The comparison is

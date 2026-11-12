@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/go-test/deep"
@@ -195,5 +196,48 @@ func TestConfig_JSONLogger(t *testing.T) {
 	}
 	if _, ok := m["msg"]; !ok {
 		t.Fatalf("expected a msg field, could not find one")
+	}
+}
+
+// Modified by KAOS: the retention of what pipelines leave in produced datasets (pkg/kaos/repos).
+func TestConfig_KAOSRetention(t *testing.T) {
+	load := func(t *testing.T) *config.BaseConfig {
+		t.Helper()
+		c, err := newConfigFromFile("testdata/valid_config.yaml")
+		testutil.Must(t, err)
+		return c.GetBaseConfig()
+	}
+	r := load(t).KAOS.Repositories
+	if r.RunBranchTTL != 168*time.Hour || r.KeepDays != 30 || r.RetentionInterval != time.Hour {
+		t.Fatalf("defaults: run_branch_ttl %s, keep_days %d, retention_interval %s", r.RunBranchTTL, r.KeepDays, r.RetentionInterval)
+	}
+	for _, tc := range []struct {
+		name  string
+		set   func(r *config.BaseConfig)
+		valid bool
+	}{
+		{"ttl 24h", func(c *config.BaseConfig) { c.KAOS.Repositories.RunBranchTTL = 24 * time.Hour }, true},
+		{"ttl 23h59m", func(c *config.BaseConfig) { c.KAOS.Repositories.RunBranchTTL = 24*time.Hour - time.Minute }, false},
+		{"ttl 1h", func(c *config.BaseConfig) { c.KAOS.Repositories.RunBranchTTL = time.Hour }, false},
+		{"ttl 0 never sweeps", func(c *config.BaseConfig) { c.KAOS.Repositories.RunBranchTTL = 0 }, true},
+		{"ttl negative", func(c *config.BaseConfig) { c.KAOS.Repositories.RunBranchTTL = -time.Hour }, false},
+		{"keep_days 0 never expires", func(c *config.BaseConfig) { c.KAOS.Repositories.KeepDays = 0 }, true},
+		{"keep_days 1", func(c *config.BaseConfig) { c.KAOS.Repositories.KeepDays = 1 }, true},
+		{"keep_days negative", func(c *config.BaseConfig) { c.KAOS.Repositories.KeepDays = -1 }, false},
+		{"interval 5m", func(c *config.BaseConfig) { c.KAOS.Repositories.RetentionInterval = 5 * time.Minute }, true},
+		{"interval 4m", func(c *config.BaseConfig) { c.KAOS.Repositories.RetentionInterval = 4 * time.Minute }, false},
+		{"interval 0", func(c *config.BaseConfig) { c.KAOS.Repositories.RetentionInterval = 0 }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := load(t)
+			tc.set(c)
+			err := c.Validate()
+			if tc.valid && err != nil {
+				t.Fatalf("want valid, got %v", err)
+			}
+			if !tc.valid && !errors.Is(err, config.ErrBadConfiguration) {
+				t.Fatalf("want a bad configuration error, got %v", err)
+			}
+		})
 	}
 }
