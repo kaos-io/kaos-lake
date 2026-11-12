@@ -3,6 +3,7 @@
 package declared_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -281,6 +282,14 @@ func TestReconcile_PerAppRights(t *testing.T) {
 	require.True(t, allowed(t, svc, a.User, permissions.CreateBranchAction, permissions.BranchArn("outputs-yolo", "run-1")))
 	require.True(t, allowed(t, svc, a.User, permissions.CreateTagAction, permissions.TagArn("outputs-yolo", "t")))
 	require.False(t, allowed(t, svc, a.User, permissions.DeleteRepositoryAction, permissions.RepoArn("outputs-yolo")))
+	// Never a lakeFS action (hook), which would run later with someone else's rights; the path
+	// next to it is as before.
+	for _, action := range []string{permissions.WriteObjectAction, permissions.DeleteObjectAction} {
+		require.False(t, allowed(t, svc, a.User, action, permissions.ObjectArn("outputs-yolo", "_lakefs_actions/planted.yaml")), action)
+		require.False(t, allowed(t, svc, a.User, action, permissions.ObjectArn("outputs-yolo", "_lakefs_actions/sub/planted.yaml")), action)
+		require.True(t, allowed(t, svc, a.User, action, permissions.ObjectArn("outputs-yolo", "_lakefs_actions-notes/a")), action)
+	}
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, permissions.ObjectArn("outputs-yolo", "_lakefs_actions/planted.yaml")))
 	// Another app's outputs, and other repositories: nothing.
 	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("outputs-yolo")))
 	require.False(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("outputs-mlci")))
@@ -333,4 +342,132 @@ func TestReconcile_AppPolicyLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.GetPolicy(ctx, "Other")
 	require.NoError(t, err)
+}
+
+// PRD novelcore/kaos#1911 D-04: an app declares the datasets it produces, by repository name. A
+// name that is not a dataset's, or a dataset two apps (or one app twice) declare, fails the load.
+func TestLoad_Datasets(t *testing.T) {
+	app := func(user, key, datasets string) string {
+		return `{"user":"kaos-app-` + user + `","access_key_id":"` + key + `","secret_access_key":"s","datasets":` + datasets + `}`
+	}
+	dir := t.TempDir()
+	writeApp(t, dir, "a-yolo", app("yolo", "AKIAYOLO", `["dataset-clean","dataset-embeddings"]`))
+	writeApp(t, dir, "b-mlci", app("mlci", "AKIAMLCI", `["dataset-splits"]`))
+	apps, err := declared.Load(dir)
+	require.NoError(t, err)
+	var loaded declared.Loaded
+	loaded.Set(apps)
+	require.Equal(t, map[string]string{"dataset-clean": "yolo", "dataset-embeddings": "yolo", "dataset-splits": "mlci"}, loaded.Datasets())
+
+	for name, content := range map[string]string{
+		"not a dataset name":   app("mlci", "AKIAMLCI", `["embeddings"]`),
+		"an outputs name":      app("mlci", "AKIAMLCI", `["outputs-mlci"]`),
+		"a pattern":            app("mlci", "AKIAMLCI", `["dataset-*"]`),
+		"a branch of another":  app("mlci", "AKIAMLCI", `["dataset-clean.filtered"]`),
+		"second producer":      app("mlci", "AKIAMLCI", `["dataset-clean"]`),
+		"declared twice by it": app("mlci", "AKIAMLCI", `["dataset-splits","dataset-splits"]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := t.TempDir()
+			writeApp(t, d, "a-yolo", app("yolo", "AKIAYOLO", `["dataset-clean"]`))
+			writeApp(t, d, "b-mlci", content)
+			_, err := declared.Load(d)
+			require.ErrorIs(t, err, declared.ErrInvalid)
+		})
+	}
+}
+
+// PRD novelcore/kaos#1911 D-04, AC-07: the rights matrix. On a dataset it declares an app writes
+// and deletes objects, works on run-* branches, merges into main and tags k-*; on any other
+// dataset it only reads; a version tag (v*), another branch and the repository itself stay closed.
+func TestReconcile_DeclaredDatasetRights(t *testing.T) {
+	ctx := t.Context()
+	svc := newStore(t)
+	a := yolo
+	a.Datasets = []string{"dataset-clean"}
+	b := mlci
+	b.Datasets = []string{"dataset-splits"}
+	// Declared, and nothing says the datasets are ready: read only.
+	_, err := declared.Reconcile(ctx, svc, []declared.App{a, b}, 0)
+	require.NoError(t, err)
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, permissions.ObjectArn("dataset-clean", "a")))
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, permissions.ObjectArn("dataset-clean", "a")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateCommitAction, permissions.BranchArn("dataset-clean", "main")))
+
+	// Ready for the app that produces them, and for no other.
+	ready := declared.WithProducedDatasets(func(_ context.Context, dataset, app string) bool {
+		return map[string]string{"dataset-clean": "yolo", "dataset-splits": "mlci"}[dataset] == app
+	})
+	_, err = declared.Reconcile(ctx, svc, []declared.App{a, b}, 0, ready)
+	require.NoError(t, err)
+
+	const (
+		own, other, people = "dataset-clean", "dataset-splits", "dataset-cars"
+	)
+	branch, tag, obj := permissions.BranchArn, permissions.TagArn, permissions.ObjectArn
+	for _, c := range []struct {
+		action, resource string
+		want             bool
+	}{
+		// The declared dataset.
+		{permissions.ReadObjectAction, obj(own, "images/1.jpg"), true},
+		{permissions.WriteObjectAction, obj(own, "images/1.jpg"), true},
+		{permissions.DeleteObjectAction, obj(own, "images/1.jpg"), true},
+		{permissions.CreateBranchAction, branch(own, "run-7f3a"), true},
+		{permissions.DeleteBranchAction, branch(own, "run-7f3a"), true},
+		{permissions.CreateCommitAction, branch(own, "run-7f3a"), true},
+		{permissions.CreateCommitAction, branch(own, "main"), true}, // the merge into main
+		{permissions.CreateTagAction, tag(own, "k-7f3a"), true},
+		// Closed on the declared dataset: versions people release, other branches, main itself,
+		// the repository and its settings.
+		{permissions.CreateTagAction, tag(own, "v1"), false},
+		{permissions.CreateTagAction, tag(own, "golden"), false},
+		{permissions.DeleteTagAction, tag(own, "k-7f3a"), false},
+		{permissions.DeleteTagAction, tag(own, "v1"), false},
+		{permissions.CreateBranchAction, branch(own, "edit-1"), false},
+		{permissions.CreateCommitAction, branch(own, "edit-1"), false},
+		{permissions.CreateCommitAction, branch(own, "main-2"), false},
+		{permissions.CreateCommitAction, branch(own, "xrun-1"), false},
+		{permissions.CreateBranchAction, branch(own, "main"), false},
+		{permissions.DeleteBranchAction, branch(own, "main"), false},
+		{permissions.RevertBranchAction, branch(own, "main"), false},
+		{permissions.SetBranchProtectionRulesAction, permissions.RepoArn(own), false},
+		{permissions.UpdateRepositoryAction, permissions.RepoArn(own), false},
+		{permissions.DeleteRepositoryAction, permissions.RepoArn(own), false},
+		// Another app's dataset and a dataset people own: read, nothing else.
+		{permissions.ReadObjectAction, obj(other, "a"), true},
+		{permissions.WriteObjectAction, obj(other, "a"), false},
+		{permissions.DeleteObjectAction, obj(other, "a"), false},
+		{permissions.CreateBranchAction, branch(other, "run-7f3a"), false},
+		{permissions.CreateCommitAction, branch(other, "run-7f3a"), false},
+		{permissions.CreateCommitAction, branch(other, "main"), false},
+		{permissions.CreateTagAction, tag(other, "k-7f3a"), false},
+		{permissions.ReadObjectAction, obj(people, "a"), true},
+		{permissions.WriteObjectAction, obj(people, "a"), false},
+		{permissions.CreateCommitAction, branch(people, "main"), false},
+		{permissions.CreateBranchAction, branch(people, "run-7f3a"), false},
+		{permissions.CreateTagAction, tag(people, "k-7f3a"), false},
+		{permissions.WriteObjectAction, obj(own+"2", "a"), false}, // no prefix match
+		{permissions.CreateRepositoryAction, permissions.RepoArn("dataset-new"), false},
+		// A lakeFS action (hook) runs with the rights of whoever triggers it later: the app never
+		// writes one, by upload, delete, copy (a write on the destination) or any other write.
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actions/planted.yaml"), false},
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actions/sub/planted.yaml"), false},
+		{permissions.DeleteObjectAction, obj(own, "_lakefs_actions/planted.yaml"), false},
+		{permissions.ReadObjectAction, obj(own, "_lakefs_actions/planted.yaml"), true},
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actions-notes/a"), true},
+		{permissions.WriteObjectAction, obj(own, "images/_lakefs_actions/a"), true},
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actionsx"), true},
+	} {
+		require.Equal(t, c.want, allowed(t, svc, a.User, c.action, c.resource), "%s on %s", c.action, c.resource)
+	}
+	require.True(t, allowed(t, svc, b.User, permissions.WriteObjectAction, obj(other, "a")))
+	require.False(t, allowed(t, svc, b.User, permissions.WriteObjectAction, obj(own, "a")))
+
+	// The rights follow the declaration: a dataset no longer declared is read-only again.
+	_, err = declared.Reconcile(ctx, svc, []declared.App{yolo, b}, 0, ready)
+	require.NoError(t, err)
+	require.False(t, allowed(t, svc, a.User, permissions.WriteObjectAction, obj(own, "a")))
+	require.False(t, allowed(t, svc, a.User, permissions.CreateCommitAction, branch(own, "main")))
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj(own, "a")))
 }

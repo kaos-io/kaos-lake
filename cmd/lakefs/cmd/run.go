@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"text/template"
 	"time"
@@ -129,6 +130,10 @@ var runCmd = &cobra.Command{
 		// run in, are the declared ones.
 		var exchangeTTL time.Duration
 		declaredApps := &declared.Loaded{}
+		// Modified by KAOS: nobody but the reconcile creates a repository an app declares (PRD
+		// novelcore/kaos#1911 CON-02).
+		repos.Declare(declaredApps.Datasets)
+		var producedCatalog atomic.Pointer[catalog.Catalog]
 		if workload := baseCfg.KAOS.WorkloadIdentity; workload.Audience != "" {
 			if baseCfg.KAOS.AppUsers.Path == "" {
 				logger.Fatal("kaos.workload_identity needs kaos.app_users.path")
@@ -146,7 +151,20 @@ var runCmd = &cobra.Command{
 				logger.Fatal(`kaos.app_users.path needs auth.ui_config.rbac "internal"`)
 			}
 			go declared.Run(ctx, authService, appUsers.Path, appUsers.Interval, exchangeTTL, declaredApps, logger,
-				declared.WithLegacyRepository(baseCfg.KAOS.Repositories.LegacyRepository))
+				declared.WithLegacyRepository(baseCfg.KAOS.Repositories.LegacyRepository),
+				// An app writes a dataset it declares only once it exists as its own with main
+				// protected (PRD novelcore/kaos#1911 CON-02, CON-03). The catalog starts below.
+				declared.WithProducedDatasets(func(ctx context.Context, dataset, app string) bool {
+					c := producedCatalog.Load()
+					if c == nil {
+						return false
+					}
+					ready, err := repos.ProducedBy(ctx, c, dataset, app)
+					if err != nil {
+						logger.WithError(err).WithField("dataset", dataset).Warn("Produced dataset not readable: its app only reads it")
+					}
+					return ready
+				}))
 		}
 		// Modified by KAOS: identity-provider tokens as bearer tokens (F-03).
 		if tokenIdentity := baseCfg.KAOS.TokenIdentity; tokenIdentity.Issuer != "" {
@@ -199,6 +217,7 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("failed to create catalog")
 		}
 		defer func() { _ = c.Close() }()
+		producedCatalog.Store(c)
 
 		// Modified by KAOS: keep the latest MeluXina staging snapshot across restarts (PRD
 		// novelcore/kaos#1283 F-10).
@@ -218,16 +237,20 @@ var runCmd = &cobra.Command{
 			logger.WithError(err).Fatal("kaos.dataset_events")
 		}
 
-		// Modified by KAOS: keep the project's default dataset and each declared app's outputs
-		// repository in place (PRD novelcore/kaos#1283 F-01).
+		// Modified by KAOS: keep the project's default dataset, each declared app's outputs
+		// repository (PRD novelcore/kaos#1283 F-01) and the datasets apps produce (PRD
+		// novelcore/kaos#1911 F-10) in place.
 		// Datasets shared with other projects get read-only grants in the multi-user store (F-12).
 		if r := baseCfg.KAOS.Repositories; r.StorageNamespacePrefix != "" {
+			authCache := cfg.AuthConfig().GetBaseAuthConfig().Cache
 			var shares repos.AuthService
 			if multiuser.Enabled(cfg) {
 				shares = authService
 			}
 			go repos.Run(ctx, c, shares, r.StorageID, r.StorageNamespacePrefix, r.Location, r.DefaultDataset,
-				declaredApps.Outputs, r.Interval, logger)
+				declaredApps.Outputs, declaredApps.Datasets, r.Interval,
+				// The longest a session keeps the policies it read, and a margin.
+				authCache.TTL+authCache.Jitter+repos.SettleMargin, logger)
 		}
 
 		// Setup usage reporter - it is no longer possible to disable it

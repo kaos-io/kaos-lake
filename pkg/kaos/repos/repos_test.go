@@ -9,10 +9,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/graveler"
+	"github.com/treeverse/lakefs/pkg/kaos/datasetevents"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
 )
 
@@ -44,9 +46,10 @@ func (f *fakeCatalog) GetRepository(_ context.Context, name string) (*catalog.Re
 	return nil, graveler.ErrRepositoryNotFound
 }
 
-func (f *fakeCatalog) CreateRepository(_ context.Context, name, storageID, ns, branch string, _ bool) (*catalog.Repository, error) {
+func (f *fakeCatalog) CreateRepositoryWithMetadata(_ context.Context, name, storageID, ns, branch string, _ bool, md map[string]string) (*catalog.Repository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.md[name] = maps.Clone(graveler.RepositoryMetadata(md))
 	r := &catalog.Repository{Name: name, StorageID: storageID, StorageNamespace: ns, DefaultBranch: branch}
 	f.repos[name], f.created = r, append(f.created, name)
 	return r, nil
@@ -107,7 +110,7 @@ func (f *fakeCatalog) ListRepositories(_ context.Context, limit int, prefix, _, 
 
 const prefix = "gs://kaos-e2e-lakefs/"
 
-var want = repos.Desired("dataset-default", map[string]string{"yolo": "outputs-yolo", "hera": "outputs-hera"})
+var want = repos.Desired("dataset-default", map[string]string{"yolo": "outputs-yolo", "hera": "outputs-hera"}, nil)
 
 // AC-01: a new project gets its default dataset and one outputs repository per app, labelled.
 func TestReconcile_CreatesAndLabelsTheDeclaredRepositories(t *testing.T) {
@@ -150,7 +153,7 @@ func TestReconcile_KeepsAndLabelsOrphanedOutputs(t *testing.T) {
 	require.Equal(t, "true", f.md["outputs-old"][repos.KeyOrphaned])
 	require.Empty(t, f.md["outputs-handmade"])
 
-	back := repos.Desired("dataset-default", map[string]string{"old": "outputs-old"})
+	back := repos.Desired("dataset-default", map[string]string{"old": "outputs-old"}, nil)
 	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", back)
 	require.NoError(t, err)
 	require.NotContains(t, f.md["outputs-old"], repos.KeyOrphaned)
@@ -172,6 +175,11 @@ func TestValidateMetadata(t *testing.T) {
 		{"outputs-yolo", map[string]string{repos.KeyKind: "outputs"}, false},
 		{"dataset-cars", map[string]string{repos.KeyDefault: "true"}, false},
 		{"dataset-cars", map[string]string{repos.KeyApp: "yolo"}, false},
+		// PRD novelcore/kaos#1911 CON-02: who produces a dataset is the platform's to say.
+		{"dataset-cars", map[string]string{repos.KeyProducer: "yolo"}, false},
+		{"dataset-cars", map[string]string{repos.KeyProducer: ""}, false},
+		{"dataset-cars", map[string]string{repos.KeyProducer + ".filtered": "yolo"}, false},
+		{"dataset-cars", map[string]string{"kaos.producers": "free text"}, true},
 		{"dataset-cars", map[string]string{repos.KeyKind: "table"}, false},
 	} {
 		err := repos.ValidateMetadata(c.name, c.md)
@@ -183,6 +191,8 @@ func TestValidateMetadata(t *testing.T) {
 	}
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyKind}), repos.ErrInvalid)
 	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyOrphaned}), repos.ErrInvalid)
+	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyProducer}), repos.ErrInvalid)
+	require.ErrorIs(t, repos.ValidateDelete([]string{repos.KeyProducer + ".filtered"}), repos.ErrInvalid)
 	require.NoError(t, repos.ValidateDelete([]string{repos.KeyDescription}))
 }
 
@@ -246,4 +256,89 @@ func TestReconcile_LabelsHandmadeDatasets(t *testing.T) {
 	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", want)
 	require.NoError(t, err)
 	require.Equal(t, repos.KindDataset, f.md["dataset-fresh"][repos.KeyKind])
+}
+
+// PRD novelcore/kaos#1911 F-10: a dataset an app declares is created, labelled a dataset of that
+// producer, and announced at once, so pipelines can pick it before its first run.
+func TestReconcile_CreatesProducedDatasets(t *testing.T) {
+	c := &count{}
+	n := datasetevents.NewNotifier(c, nil).WithTiming(20*time.Millisecond, time.Millisecond)
+	datasetevents.Activate(n)
+	t.Cleanup(func() { datasetevents.Activate(nil) })
+
+	f := newFake()
+	want := repos.Desired("dataset-default", map[string]string{"yolo": "outputs-yolo"},
+		map[string]string{"dataset-clean": "yolo", "dataset-embeddings": "hera"})
+	changes, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Equal(t, []string{"dataset-default", "outputs-yolo", "dataset-clean", "dataset-embeddings"}, f.created)
+	require.Equal(t, "gs://kaos-e2e-lakefs/dataset-clean", f.repos["dataset-clean"].StorageNamespace)
+	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "yolo"}, f.md["dataset-clean"])
+	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "hera"}, f.md["dataset-embeddings"])
+	require.NotContains(t, f.md["dataset-default"], repos.KeyProducer)
+	require.NotEmpty(t, changes)
+	n.Wait()
+	require.EqualValues(t, 1, c.n.Load(), "the new datasets are announced, in one event")
+
+	again, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.NoError(t, err)
+	require.Empty(t, again, "a second pass changes nothing")
+	n.Wait()
+	require.EqualValues(t, 1, c.n.Load(), "and announces nothing")
+
+}
+
+// PRD novelcore/kaos#1911 CON-02: a dataset is written by people or by one pipeline, never both. A
+// declared dataset that already exists is the app's only when it already names that app as its
+// producer. Anything else, whatever it holds, is left exactly as it is and reported; the other
+// datasets go on.
+func TestReconcile_AdoptsOnlyItsOwn(t *testing.T) {
+	f := newFake()
+	f.add("dataset-default", map[string]string{repos.KeyKind: "dataset", repos.KeyDefault: "true"})
+	f.add("dataset-cars", map[string]string{repos.KeyKind: "dataset", repos.KeyDescription: "uploaded"})
+	f.add("dataset-hera", map[string]string{repos.KeyKind: "dataset", repos.KeyProducer: "hera"})
+	f.add("dataset-mine", map[string]string{repos.KeyProducer: "yolo"}) // its kind label was lost
+	f.add("dataset-handmade", nil)                                      // unlabelled, with someone's commit
+	f.add("dataset-untouched", nil)                                     // unlabelled and empty: still someone else's
+	f.empty["dataset-untouched"] = true
+	before := map[string]graveler.RepositoryMetadata{}
+	for name, md := range f.md {
+		before[name] = maps.Clone(md)
+	}
+	want := repos.Desired("dataset-default", nil, map[string]string{
+		"dataset-default": "yolo", "dataset-cars": "yolo", "dataset-hera": "yolo", "dataset-mine": "yolo",
+		"dataset-handmade": "yolo", "dataset-untouched": "yolo", "dataset-new": "yolo",
+	})
+	_, err := repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.ErrorIs(t, err, repos.ErrNotAdopted)
+	for dataset, why := range map[string]string{
+		"dataset-default":   "it is the project's default dataset, which people write",
+		"dataset-cars":      "it is a dataset people write",
+		"dataset-hera":      "it is produced by hera",
+		"dataset-handmade":  "it exists and the platform did not create it for yolo",
+		"dataset-untouched": "it exists and the platform did not create it for yolo",
+	} {
+		require.ErrorContains(t, err, "repository "+dataset+": dataset not adopted: app yolo declares it, but "+why)
+		require.NotEqual(t, "yolo", f.md[dataset][repos.KeyProducer], dataset)
+	}
+	for _, dataset := range []string{"dataset-default", "dataset-cars", "dataset-hera"} {
+		require.Equal(t, before[dataset], f.md[dataset], "%s is left as it was", dataset)
+	}
+	require.Empty(t, f.md["dataset-untouched"])
+	// Its own and the new one are in place, despite the refusals before them.
+	for _, dataset := range []string{"dataset-mine", "dataset-new"} {
+		require.NotContains(t, err.Error(), dataset)
+		require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "yolo"}, f.md[dataset], dataset)
+	}
+	require.Equal(t, []string{"dataset-new"}, f.created)
+
+	// A producer label changed or removed outside the reconcile is not put back: the dataset is
+	// then another app's, or people's, and stays so until the platform says otherwise.
+	f.md["dataset-new"][repos.KeyProducer] = "hera"
+	delete(f.md["dataset-mine"], repos.KeyProducer)
+	_, err = repos.Reconcile(t.Context(), f, "", prefix, "", want)
+	require.ErrorContains(t, err, "repository dataset-new: dataset not adopted: app yolo declares it, but it is produced by hera")
+	require.ErrorContains(t, err, "repository dataset-mine: dataset not adopted: app yolo declares it, but it is a dataset people write")
+	require.Equal(t, "hera", f.md["dataset-new"][repos.KeyProducer])
+	require.NotContains(t, f.md["dataset-mine"], repos.KeyProducer)
 }

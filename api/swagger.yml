@@ -757,6 +757,13 @@ components:
             a part of the merge commit; consider adding it to the 'metadata' or 'message'
             fields.  This behaves like a GitHub or GitLab "squash merge", or in Git terms 'git
             merge --squash; git commit ...'.
+        expected_head:
+          type: string
+          description: |
+            Modified by KAOS: the full ID of the commit the destination branch must be at.  When
+            set, the merge lands only if the destination's head is still that commit when the
+            branch is updated; otherwise nothing changes and the answer is 412, naming the
+            current head.
     BranchCreation:
       type: object
       required:
@@ -4421,7 +4428,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MergeResult"
         412:
-          description: precondition failed (e.g. a pre-merge hook returned a failure)
+          description: precondition failed (e.g. a pre-merge hook returned a failure, or the destination is not at expected_head)
           content:
             application/json:
               schema:

@@ -2280,6 +2280,14 @@ func (c *Controller) CreateRepository(w http.ResponseWriter, r *http.Request, bo
 	}
 	ctx := r.Context()
 
+	// Modified by KAOS: a dataset an app declares is created by the platform, labelled; a
+	// repository someone made first would never be the app's (PRD novelcore/kaos#1911 CON-02).
+	if app, ok := repos.DeclaredProducer(body.Name); ok {
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"%s is a dataset produced by %s: the platform creates it, nobody else can", body.Name, app))
+		return
+	}
+
 	// Verify first if there is a repository definition.
 	// Return conflict if definition already exists, before
 	// creating the repository itself and ensuring (optional) storage namespace holds an object.
@@ -5384,6 +5392,21 @@ func (c *Controller) MergeIntoBranch(w http.ResponseWriter, r *http.Request, bod
 		metadata = body.Metadata.AdditionalProperties
 	}
 
+	// Modified by KAOS: main of a dataset a pipeline produces takes a merge only with the head it
+	// expects, whoever the caller is (PRD novelcore/kaos#1911 CON-03).
+	if swag.StringValue(body.ExpectedHead) == "" {
+		labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
+		if c.handleAPIError(ctx, w, r, err) {
+			return
+		}
+		if repos.MergeNeedsExpectedHead(labels, destinationBranch) {
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+				"expected_head is required to merge into %s of %s, a dataset produced by %s: send the commit ID %s is at",
+				destinationBranch, repository, labels[repos.KeyProducer], destinationBranch))
+			return
+		}
+	}
+
 	reference, err := c.Catalog.Merge(ctx,
 		repository, destinationBranch, sourceRef,
 		user.Committer(),
@@ -5393,6 +5416,8 @@ func (c *Controller) MergeIntoBranch(w http.ResponseWriter, r *http.Request, bod
 		graveler.WithForce(swag.BoolValue(body.Force)),
 		graveler.WithAllowEmpty(swag.BoolValue(body.AllowEmpty)),
 		graveler.WithSquashMerge(swag.BoolValue(body.SquashMerge)),
+		// Modified by KAOS: a promotion refuses a destination that moved (PRD novelcore/kaos#1911 D-05).
+		graveler.WithExpectedHead(graveler.CommitID(swag.StringValue(body.ExpectedHead))),
 	)
 
 	if errors.Is(err, graveler.ErrConflictFound) {
@@ -5400,6 +5425,22 @@ func (c *Controller) MergeIntoBranch(w http.ResponseWriter, r *http.Request, bod
 			Reference: reference,
 		})
 		return
+	}
+	// Modified by KAOS: the refusal says where the destination is, so the caller can restage from it.
+	if body.ExpectedHead != nil && errors.Is(err, graveler.ErrPreconditionFailed) {
+		writeError(w, r, http.StatusPreconditionFailed, err)
+		return
+	}
+	// Modified by KAOS: no run stages on main of a dataset a pipeline produces, so uncommitted
+	// objects there are nobody's to commit; say so, and that the repositories reconcile clears
+	// them (repos.ReconcileStrays).
+	if errors.Is(err, graveler.ErrDirtyBranch) {
+		if labels, mdErr := c.Catalog.GetRepositoryMetadata(ctx, repository); mdErr == nil && repos.MergeNeedsExpectedHead(labels, destinationBranch) {
+			writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+				"%s of %s, a dataset produced by %s, holds uncommitted objects that no run wrote, so nothing can be merged into it yet: the platform clears them within a minute, try again",
+				destinationBranch, repository, labels[repos.KeyProducer]))
+			return
+		}
 	}
 	if c.handleAPIError(ctx, w, r, err) {
 		return
@@ -5474,6 +5515,19 @@ func (c *Controller) CreateTag(w http.ResponseWriter, r *http.Request, body apig
 	}
 	ctx := r.Context()
 	c.LogAction(ctx, "create_tag", r, repository, body.Id, "")
+
+	// Modified by KAOS: no numbered release and no reserved name on a dataset a pipeline produces
+	// (PRD novelcore/kaos#1911 D-03).
+	if repos.VersionTag.MatchString(body.Id) || repos.ReservedTagName(body.Id) {
+		labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
+		if c.handleAPIError(ctx, w, r, err) {
+			return
+		}
+		if err := repos.ValidateTag(repository, labels, body.Id); err != nil {
+			writeError(w, r, http.StatusBadRequest, err)
+			return
+		}
+	}
 
 	commitID, err := c.Catalog.CreateTag(ctx, repository, body.Id, body.Ref, graveler.WithForce(swag.BoolValue(body.Force)))
 	if c.handleAPIError(ctx, w, r, err) {
@@ -6118,6 +6172,19 @@ func (c *Controller) MergePullRequest(w http.ResponseWriter, r *http.Request, re
 	user, err := auth.GetUser(ctx)
 	if err != nil {
 		writeError(w, r, http.StatusUnauthorized, "missing user")
+		return
+	}
+
+	// Modified by KAOS: a pull request carries no expected head, so it never lands on main of a
+	// dataset a pipeline produces (PRD novelcore/kaos#1911 CON-03).
+	labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
+	if c.handleAPIError(ctx, w, r, err) {
+		return
+	}
+	if repos.MergeNeedsExpectedHead(labels, pr.Destination) {
+		writeError(w, r, http.StatusBadRequest, fmt.Sprintf(
+			"%s of %s, a dataset produced by %s, moves only by a merge that carries expected_head; a pull request cannot merge into it",
+			pr.Destination, repository, labels[repos.KeyProducer]))
 		return
 	}
 

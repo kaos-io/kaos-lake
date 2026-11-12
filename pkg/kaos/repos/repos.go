@@ -3,7 +3,7 @@
 // Package repos gives repositories a purpose people can see (PRD novelcore/kaos#1283): a dataset
 // (`dataset-*`), an ML app's outputs (`outputs-<app>`), or other. The purpose is repository
 // metadata under the `kaos.` prefix. The platform's own repositories (the project's default
-// dataset, each app's outputs) are declared and kept in place by Reconcile; a repository is never
+// dataset, each app's outputs, the datasets apps produce) are declared and kept in place by Reconcile; a repository is never
 // deleted here.
 package repos
 
@@ -11,9 +11,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/treeverse/lakefs/pkg/catalog"
@@ -31,6 +33,11 @@ const (
 	KeyTemplate    = "kaos.template"
 	KeyDescription = "kaos.description"
 	KeyOrphaned    = "kaos.orphaned"
+	// KeyProducer is the ML app whose pipeline produces the dataset: its only writer (PRD
+	// novelcore/kaos#1911 CON-02). Set by the platform only, as is every key under
+	// producerPrefix.
+	KeyProducer    = "kaos.producer"
+	producerPrefix = KeyProducer + "."
 	// KeyLocation is where the repository's storage lives (D-10); set by the platform only.
 	KeyLocation = "kaos.location"
 	// KeySharedWith lists the projects that may read a dataset, comma-separated (D-09). Only the
@@ -45,8 +52,17 @@ const (
 
 var ErrInvalid = errors.New("invalid repository label")
 
+// ErrNotAdopted is why Reconcile leaves a dataset an app declares alone: the repository exists
+// and is not that app's (PRD novelcore/kaos#1911 CON-02).
+var ErrNotAdopted = errors.New("dataset not adopted")
+
 // platformKeys are written by kaos-lake only: which repositories the platform declared.
-var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation}
+var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation, KeyProducer}
+
+// platformKey reports whether label key k is written by kaos-lake only.
+func platformKey(k string) bool {
+	return slices.Contains(platformKeys, k) || strings.HasPrefix(k, producerPrefix)
+}
 
 // projectName is one KubeProject name in kaos.shared_with.
 var projectName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -81,7 +97,7 @@ func ValidName(name, prefix string) bool {
 // kaos-lake's.
 func ValidateMetadata(name string, md map[string]string) error {
 	for k := range md {
-		if slices.Contains(platformKeys, k) {
+		if platformKey(k) {
 			return fmt.Errorf("%w: %s is set by the platform only", ErrInvalid, k)
 		}
 	}
@@ -114,7 +130,7 @@ func ValidateMetadata(name string, md map[string]string) error {
 // ValidateDelete checks the label keys a caller removes from a repository.
 func ValidateDelete(keys []string) error {
 	for _, k := range keys {
-		if k == KeyKind || slices.Contains(platformKeys, k) {
+		if k == KeyKind || platformKey(k) {
 			return fmt.Errorf("%w: %s is kept by the platform", ErrInvalid, k)
 		}
 	}
@@ -123,10 +139,13 @@ func ValidateDelete(keys []string) error {
 
 // Declared is one repository the platform keeps in place.
 type Declared struct {
-	Name    string
-	Kind    string
-	App     string // the outputs' app; empty for a dataset
-	Default bool   // the project's default dataset
+	Name     string
+	Kind     string
+	App      string // the outputs' app; empty for a dataset
+	Default  bool   // the project's default dataset
+	Producer string // the app that produces the dataset; empty for a dataset people write
+	// Hold, when not empty, is why a repository that does not exist is not created in this pass.
+	Hold string
 }
 
 // Labels are the declared repository's `kaos.` metadata.
@@ -138,11 +157,15 @@ func (d Declared) Labels() map[string]string {
 	if d.Default {
 		md[KeyDefault] = "true"
 	}
+	if d.Producer != "" {
+		md[KeyProducer] = d.Producer
+	}
 	return md
 }
 
-// Desired is the project's default dataset, when named, and one outputs repository per app.
-func Desired(defaultDataset string, outputs map[string]string) []Declared {
+// Desired is the project's default dataset, when named, one outputs repository per app, and the
+// datasets apps produce (producers: dataset → app).
+func Desired(defaultDataset string, outputs, producers map[string]string) []Declared {
 	var want []Declared
 	if defaultDataset != "" {
 		want = append(want, Declared{Name: defaultDataset, Kind: KindDataset, Default: true})
@@ -155,13 +178,21 @@ func Desired(defaultDataset string, outputs map[string]string) []Declared {
 	for _, app := range apps {
 		want = append(want, Declared{Name: outputs[app], Kind: KindOutputs, App: app})
 	}
+	datasets := make([]string, 0, len(producers))
+	for d := range producers {
+		datasets = append(datasets, d)
+	}
+	slices.Sort(datasets)
+	for _, d := range datasets {
+		want = append(want, Declared{Name: d, Kind: KindDataset, Producer: producers[d]})
+	}
 	return want
 }
 
 // Catalog is what Reconcile needs of the lakeFS catalog.
 type Catalog interface {
 	GetRepository(ctx context.Context, repository string) (*catalog.Repository, error)
-	CreateRepository(ctx context.Context, repository, storageID, storageNamespace, branch string, readOnly bool) (*catalog.Repository, error)
+	CreateRepositoryWithMetadata(ctx context.Context, repository, storageID, storageNamespace, branch string, readOnly bool, metadata map[string]string) (*catalog.Repository, error)
 	GetRepositoryMetadata(ctx context.Context, repository string) (graveler.RepositoryMetadata, error)
 	UpdateRepositoryMetadata(ctx context.Context, repository string, metadata graveler.RepositoryMetadata) error
 	DeleteRepositoryMetadata(ctx context.Context, repository string, keys []string) error
@@ -171,20 +202,32 @@ type Catalog interface {
 
 // Reconcile creates each declared repository that is missing, under storagePrefix, and puts its
 // labels back. An outputs repository no app declares any longer is labelled orphaned and kept: it
-// holds results. It returns a description of each change.
+// holds results. A dataset an app declares that exists and is not that app's is left alone
+// (ErrNotAdopted). A declared repository that fails does not stop the others: every failure is in
+// the returned error. It returns a description of each change.
 func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix, location string, want []Declared) ([]string, error) {
 	var changes []string
 	note := func(format string, args ...any) { changes = append(changes, fmt.Sprintf(format, args...)) }
 	declared := map[string]bool{}
+	var failed []error
 	for _, d := range want {
 		declared[d.Name] = true
 		if err := ensure(ctx, c, storageID, storagePrefix, d, note); err != nil {
-			return changes, fmt.Errorf("repository %s: %w", d.Name, err)
+			failed = append(failed, fmt.Errorf("repository %s: %w", d.Name, err))
 		}
 	}
+	if err := reconcileRest(ctx, c, storagePrefix, location, declared, note); err != nil {
+		failed = append(failed, err)
+	}
+	return changes, errors.Join(failed...)
+}
+
+// reconcileRest is what Reconcile does beyond the declared repositories: the location label, the
+// datasets made by hand and the orphaned outputs.
+func reconcileRest(ctx context.Context, c Catalog, storagePrefix, location string, declared map[string]bool, note func(string, ...any)) error {
 	if location != "" {
 		if err := labelLocation(ctx, c, storagePrefix, location, note); err != nil {
-			return changes, err
+			return err
 		}
 	}
 	// A dataset-* repository someone made by hand, without a template (lakeFS's own Create
@@ -210,9 +253,9 @@ func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix, locatio
 		NoteDataset(r.Name)
 		return nil
 	}); err != nil {
-		return changes, err
+		return err
 	}
-	err := forEachRepository(ctx, c, OutputsPrefix, func(r *catalog.Repository) error {
+	return forEachRepository(ctx, c, OutputsPrefix, func(r *catalog.Repository) error {
 		name := r.Name
 		if declared[name] {
 			return nil
@@ -227,23 +270,57 @@ func Reconcile(ctx context.Context, c Catalog, storageID, storagePrefix, locatio
 		note("labelled %s orphaned: no app declares it", name)
 		return nil
 	})
-	return changes, err
+}
+
+// notAdoptable says why the existing repository of produced dataset d, labelled md, is not d's
+// producer's to write; empty when it is. A dataset is written by people or by one pipeline, never
+// both (PRD novelcore/kaos#1911 CON-02). Reconcile creates a produced dataset with its labels in
+// one step, so a repository that exists without this producer's label was made by someone else,
+// whatever it holds: it is never taken.
+func notAdoptable(d Declared, md graveler.RepositoryMetadata) string {
+	switch {
+	case md[KeyProducer] == d.Producer:
+		return ""
+	case md[KeyProducer] != "":
+		return "it is produced by " + md[KeyProducer]
+	case md[KeyDefault] == "true":
+		return "it is the project's default dataset, which people write"
+	case md[KeyKind] != "":
+		return "it is a dataset people write"
+	default:
+		return "it exists and the platform did not create it for " + d.Producer
+	}
 }
 
 func ensure(ctx context.Context, c Catalog, storageID, storagePrefix string, d Declared, note func(string, ...any)) error {
 	_, err := c.GetRepository(ctx, d.Name)
+	if errors.Is(err, graveler.ErrNotFound) && d.Hold != "" {
+		note("%s is declared and not created yet: %s", d.Name, d.Hold)
+		return nil
+	}
 	if errors.Is(err, graveler.ErrNotFound) {
+		// Created with its labels: it never exists without them, so a repository found without
+		// them below was not made here.
 		ns := strings.TrimSuffix(storagePrefix, "/") + "/" + d.Name
-		if _, err := c.CreateRepository(ctx, d.Name, storageID, ns, defaultBranch, false); err != nil {
+		if _, err := c.CreateRepositoryWithMetadata(ctx, d.Name, storageID, ns, defaultBranch, false, d.Labels()); err != nil {
 			return fmt.Errorf("create in %s: %w", ns, err)
 		}
-		note("created %s in %s", d.Name, ns)
+		note("created %s in %s, labelled %v", d.Name, ns, d.Labels())
+		if d.Producer != "" {
+			NoteDataset(d.Name) // it joins the dropdown now
+		}
+		return nil
 	} else if err != nil {
 		return err
 	}
 	md, err := c.GetRepositoryMetadata(ctx, d.Name)
 	if err != nil {
 		return err
+	}
+	if d.Producer != "" {
+		if why := notAdoptable(d, md); why != "" {
+			return fmt.Errorf("%w: app %s declares it, but %s; %s gets no write access to it", ErrNotAdopted, d.Producer, why, d.Producer)
+		}
 	}
 	update := graveler.RepositoryMetadata{}
 	for k, v := range d.Labels() {
@@ -304,11 +381,65 @@ func forEachRepository(ctx context.Context, c Catalog, prefix string, fn func(r 
 	}
 }
 
+// declaredProducers returns the app that produces each dataset apps declare, by dataset; set by
+// Declare.
+var declaredProducers atomic.Pointer[func() map[string]string]
+
+// Declare tells this package which datasets apps declare (producers: dataset → app), so that
+// nobody but Reconcile creates a repository with one of those names (DeclaredProducer).
+func Declare(producers func() map[string]string) {
+	declaredProducers.Store(&producers)
+}
+
+// DeclaredProducer returns the app that declares dataset name, when one does. The API refuses to
+// create a repository with such a name (PRD novelcore/kaos#1911 CON-02): Reconcile creates it,
+// labelled, and a repository someone made first would never be the app's.
+func DeclaredProducer(name string) (string, bool) {
+	producers := declaredProducers.Load()
+	if producers == nil {
+		return "", false
+	}
+	app, ok := (*producers)()[name]
+	return app, ok
+}
+
+// SettleMargin is added to the longest a session keeps the policies it read (the auth cache's TTL
+// and jitter) before a produced dataset is created: clock differences between replicas and the
+// time a policy write takes to land.
+const SettleMargin = 10 * time.Second
+
+// hold keeps Reconcile from creating the produced datasets of want that people could still write
+// in the instant they appear: those ProducedPolicy has not named for longer than settle (state,
+// err: what ReconcilePeople answered). It returns when the earliest of them may be created; zero
+// when none waits on time.
+func hold(want []Declared, state PeopleState, err error, settle time.Duration, now time.Time) time.Time {
+	var next time.Time
+	for i := range want {
+		d := &want[i]
+		switch {
+		case d.Producer == "" || state.Closed(d.Name, settle, now):
+		case err != nil || !slices.Contains(state.Listed, d.Name):
+			d.Hold = "the rule that keeps people from writing it is not in place"
+		default:
+			at := state.Since.Add(settle)
+			d.Hold = fmt.Sprintf("people's sessions get the rule that keeps them from writing it first; it is created after %s", at.UTC().Format(time.RFC3339))
+			if next.IsZero() || at.Before(next) {
+				next = at
+			}
+		}
+	}
+	return next
+}
+
 // Run reconciles the declared repositories now and every interval until ctx ends. outputs returns
-// each declared app's outputs repository, by app name.
-// svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares).
+// each declared app's outputs repository, by app name; producers returns the app that produces
+// each declared dataset, by dataset.
+// svc, when not nil, also gets the read-only grants of shared datasets (ReconcileShares) and the
+// policy that keeps people from writing produced datasets (ReconcilePeople); a produced dataset is
+// then created only once that policy has named it for longer than settle, the longest a session
+// keeps the policies it read.
 func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePrefix, location, defaultDataset string,
-	outputs func() map[string]string, interval time.Duration, log logging.Logger) {
+	outputs, producers func() map[string]string, interval, settle time.Duration, log logging.Logger) {
 	log = log.WithField("service", "kaos_repositories")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -325,7 +456,24 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 		}
 	}
 	for {
-		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, Desired(defaultDataset, outputs()))
+		declared := producers()
+		want := Desired(defaultDataset, outputs(), declared)
+		// People are kept out of a produced dataset before it exists: the policy names it first,
+		// and it is created only when no session can still hold the policy without it.
+		var wake <-chan time.Time
+		if svc != nil {
+			state, changes, err := ReconcilePeople(ctx, c, svc, slices.Sorted(maps.Keys(declared)))
+			for _, ch := range changes {
+				log.Info(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Produced datasets not closed to people")
+			}
+			if next := hold(want, state, err, settle, time.Now()); !next.IsZero() {
+				wake = time.After(time.Until(next) + time.Second)
+			}
+		}
+		changes, err := Reconcile(ctx, c, storageID, storagePrefix, location, want)
 		for _, ch := range changes {
 			log.Info(ch)
 		}
@@ -343,6 +491,16 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 				log.WithError(err).Error("Dataset branch protection not applied")
 			}
 		}
+		// Nothing stages on a produced dataset's main; what is there blocks every promotion.
+		if h, ok := c.(StrayCatalog); ok {
+			changes, err := ReconcileStrays(ctx, c, h)
+			for _, ch := range changes {
+				log.Warn(ch)
+			}
+			if err != nil {
+				log.WithError(err).Error("Uncommitted objects on produced datasets not cleared")
+			}
+		}
 		shares()
 	wait:
 		for {
@@ -351,6 +509,8 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 				return
 			case <-ticker.C:
 				break wait
+			case <-wake:
+				break wait // a held dataset may be created now
 			case <-kicks:
 				// A dataset was just shared or unshared (Kick): apply it now, not at the next tick.
 				shares()

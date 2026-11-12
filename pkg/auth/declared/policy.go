@@ -31,14 +31,30 @@ var (
 	}
 )
 
+// The branches and tags of a dataset its producer works with (PRD novelcore/kaos#1911 D-04): a run
+// stages on its own run-* branch, a promotion merges it into main, and a kept version is tagged k-*.
+const (
+	runBranches    = "run-*"
+	promotedBranch = "main"
+	keptTags       = repos.KeptTagPrefix + "*"
+)
+
+// actionsPrefix is where lakeFS reads its actions (hooks) from, in each repository.
+const actionsPrefix = "_lakefs_actions/"
+
 // AppPolicyName is the name of the policy of app user user.
 func AppPolicyName(user string) string { return AppPolicyPrefix + strings.TrimPrefix(user, UserPrefix) }
 
 // AppPolicy is what an app may do (PRD novelcore/kaos#1283 D-04, T-01): read every dataset;
 // read and write its own outputs repository; and, while the project still has apps from before
 // outputs repositories, read and write legacyRepository. Nothing else: not another app's outputs,
-// not a dataset.
-func AppPolicy(a App, legacyRepository string) *model.Policy {
+// not a dataset. Except the datasets it produces (PRD novelcore/kaos#1911 D-04), produced: those
+// it declares that are ready (WithProducedDatasets). On those it also writes and deletes objects,
+// creates and deletes run-* branches, commits on run-* and on main, and creates k-* tags. Never a
+// v* tag, another branch, or the repository's settings. The commit right on main lands only a
+// merge: main is protected before the right is given, and the core refuses a direct commit, a
+// revert, a cherry-pick and an import on a protected branch.
+func AppPolicy(a App, legacyRepository string, produced []string) *model.Policy {
 	var st model.Statements
 	allow := func(actions []string, resource string) {
 		st = append(st, model.Statement{Effect: model.StatementEffectAllow, Action: actions, Resource: resource})
@@ -56,13 +72,27 @@ func AppPolicy(a App, legacyRepository string) *model.Policy {
 			allow(writeActions, r)
 		}
 	}
+	for _, d := range produced {
+		allow([]string{permissions.WriteObjectAction, permissions.DeleteObjectAction}, permissions.ObjectArn(d, "*"))
+		allow([]string{permissions.CreateBranchAction, permissions.DeleteBranchAction, permissions.CreateCommitAction},
+			permissions.BranchArn(d, runBranches))
+		allow([]string{permissions.CreateCommitAction}, permissions.BranchArn(d, promotedBranch))
+		allow([]string{permissions.CreateTagAction}, permissions.TagArn(d, keptTags))
+	}
+	// A lakeFS action (hook) is read from this prefix and runs with the rights of whoever triggers
+	// it, a person naming a version for one: the app never writes it, in any repository. Upload,
+	// delete, copy (a write on its destination), stage and link all ask for these two actions on
+	// the object. A denial wins over any allowance.
+	st = append(st, model.Statement{Effect: model.StatementEffectDeny,
+		Action:   []string{permissions.WriteObjectAction, permissions.DeleteObjectAction},
+		Resource: permissions.ObjectArn("*", actionsPrefix+"*")})
 	return &model.Policy{CreatedAt: time.Now(), DisplayName: AppPolicyName(a.User), Statement: st}
 }
 
 // ensureAppPolicy makes a's policy exist as AppPolicy says, attach to a and only to a, and
 // detaches any other policy from a (drift).
-func ensureAppPolicy(ctx context.Context, svc auth.Service, a App, legacyRepository string, note func(string, ...any)) error {
-	want := AppPolicy(a, legacyRepository)
+func ensureAppPolicy(ctx context.Context, svc auth.Service, a App, legacyRepository string, produced []string, note func(string, ...any)) error {
+	want := AppPolicy(a, legacyRepository, produced)
 	have, err := svc.GetPolicy(ctx, want.DisplayName)
 	switch {
 	case errors.Is(err, auth.ErrNotFound):

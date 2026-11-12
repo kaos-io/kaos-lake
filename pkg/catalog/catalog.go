@@ -554,6 +554,73 @@ func (c *Catalog) CreateRepository(ctx context.Context, repository string, stora
 	return catalogRepo, nil
 }
 
+// metadataStore is the part of the store that only the real graveler has. Modified by KAOS (PRD
+// novelcore/kaos#1911 CON-02, CON-03).
+type metadataStore interface {
+	CreateRepositoryWithMetadata(ctx context.Context, repositoryID graveler.RepositoryID, storageID graveler.StorageID, storageNamespace graveler.StorageNamespace, branchID graveler.BranchID, readOnly bool, metadata graveler.RepositoryMetadata) (*graveler.RepositoryRecord, error)
+	IsBranchBlocked(ctx context.Context, repository *graveler.RepositoryRecord, branchID graveler.BranchID, action graveler.BranchProtectionBlockedAction) (bool, error)
+	DiscardUncommitted(ctx context.Context, repository *graveler.RepositoryRecord, branchID graveler.BranchID, opts ...graveler.SetOptionsFunc) error
+}
+
+// DiscardUncommitted drops every uncommitted change of branch, protected or not: ResetBranch
+// without the protection check, for the platform's own reconcile. Modified by KAOS (PRD
+// novelcore/kaos#1911 CON-03).
+func (c *Catalog) DiscardUncommitted(ctx context.Context, repositoryID string, branch string) error {
+	store, ok := c.Store.(metadataStore)
+	if !ok {
+		return fmt.Errorf("discard uncommitted changes: %w", graveler.ErrInvalid)
+	}
+	repository, err := c.getRepository(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	return store.DiscardUncommitted(ctx, repository, graveler.BranchID(branch))
+}
+
+// CreateRepositoryWithMetadata is CreateRepository for a repository that carries metadata from
+// the moment it exists: no caller ever reads it without. Modified by KAOS (PRD
+// novelcore/kaos#1911 CON-02).
+func (c *Catalog) CreateRepositoryWithMetadata(ctx context.Context, repository string, storageID string, storageNamespace string, branch string, readOnly bool, metadata map[string]string) (*Repository, error) {
+	repositoryID := graveler.RepositoryID(repository)
+	storageNS := graveler.StorageNamespace(storageNamespace)
+	if err := validator.Validate([]validator.ValidateArg{
+		{Name: "name", Value: repositoryID, Fn: graveler.ValidateRepositoryID},
+		{Name: "storageNamespace", Value: storageNS, Fn: graveler.ValidateStorageNamespace},
+	}); err != nil {
+		return nil, err
+	}
+	store, ok := c.Store.(metadataStore)
+	if !ok {
+		return nil, fmt.Errorf("create repository with metadata: %w", graveler.ErrInvalid)
+	}
+	repo, err := store.CreateRepositoryWithMetadata(ctx, repositoryID, graveler.StorageID(storageID), storageNS, graveler.BranchID(branch), readOnly, metadata)
+	if err != nil {
+		return nil, err
+	}
+	return &Repository{
+		Name:             repository,
+		StorageID:        storageID,
+		StorageNamespace: storageNamespace,
+		DefaultBranch:    branch,
+		CreationDate:     repo.CreationDate,
+		ReadOnly:         repo.ReadOnly,
+	}, nil
+}
+
+// IsBranchBlocked reports whether action is blocked on branch as the write paths see it (the
+// protection manager's cached rules). Modified by KAOS (PRD novelcore/kaos#1911 CON-03).
+func (c *Catalog) IsBranchBlocked(ctx context.Context, repositoryID string, branch string, action graveler.BranchProtectionBlockedAction) (bool, error) {
+	store, ok := c.Store.(metadataStore)
+	if !ok {
+		return false, fmt.Errorf("branch protection as enforced: %w", graveler.ErrInvalid)
+	}
+	repository, err := c.getRepository(ctx, repositoryID)
+	if err != nil {
+		return false, err
+	}
+	return store.IsBranchBlocked(ctx, repository, graveler.BranchID(branch), action)
+}
+
 // CreateBareRepository create a new repository pointing to 'storageNamespace' (ex: s3://bucket1/repo) with no initial branch or commit
 // defaultBranchID will point to a non-existent branch on creation, it is up to the caller to eventually create it.
 func (c *Catalog) CreateBareRepository(ctx context.Context, repository string, storageID string, storageNamespace string, defaultBranchID string, readOnly bool) (*Repository, error) {

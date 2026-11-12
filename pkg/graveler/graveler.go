@@ -229,6 +229,9 @@ type (
 		// SquashMerge causes merge commits to be "squashed", losing parent
 		// information about the merged-from branch.
 		SquashMerge bool
+		// Modified by KAOS: ExpectedHead, when set, is the commit a merge's destination branch
+		// must still be at when the branch is updated (PRD novelcore/kaos#1911 D-05).
+		ExpectedHead CommitID
 		// NoTombstone will try to remove entry without setting a tombstone in KV
 		NoTombstone bool
 		// Condition is a function that validates the current value before performing the Set.
@@ -271,6 +274,12 @@ func WithHidden(v bool) SetOptionsFunc {
 func WithSquashMerge(v bool) SetOptionsFunc {
 	return func(opts *SetOptions) {
 		opts.SquashMerge = v
+	}
+}
+
+func WithExpectedHead(v CommitID) SetOptionsFunc {
+	return func(opts *SetOptions) {
+		opts.ExpectedHead = v
 	}
 }
 
@@ -1272,6 +1281,33 @@ func (g *Graveler) CreateRepository(ctx context.Context, repositoryID Repository
 		return nil, err
 	}
 	return repository, nil
+}
+
+// MetadataRepositoryCreator is a RefManager that creates a repository together with its metadata.
+// Modified by KAOS (PRD novelcore/kaos#1911 CON-02).
+type MetadataRepositoryCreator interface {
+	CreateRepositoryWithMetadata(ctx context.Context, repositoryID RepositoryID, repository Repository, metadata RepositoryMetadata) (*RepositoryRecord, error)
+}
+
+// CreateRepositoryWithMetadata is CreateRepository for a repository that carries metadata from
+// the moment it exists. Modified by KAOS (PRD novelcore/kaos#1911 CON-02).
+func (g *Graveler) CreateRepositoryWithMetadata(ctx context.Context, repositoryID RepositoryID, storageID StorageID, storageNamespace StorageNamespace, branchID BranchID, readOnly bool, metadata RepositoryMetadata) (*RepositoryRecord, error) {
+	creator, ok := g.RefManager.(MetadataRepositoryCreator)
+	if !ok {
+		return nil, fmt.Errorf("create repository with metadata: %w", ErrInvalid)
+	}
+	_, err := g.RefManager.GetRepository(ctx, repositoryID)
+	if err != nil && !errors.Is(err, ErrRepositoryNotFound) {
+		return nil, err
+	}
+	return creator.CreateRepositoryWithMetadata(ctx, repositoryID, NewRepository(storageID, storageNamespace, branchID, readOnly), metadata)
+}
+
+// IsBranchBlocked reports whether action is blocked on branchID as the write paths see it: through
+// the protection manager's cached rules, not the stored ones GetBranchProtectionRules reads.
+// Modified by KAOS (PRD novelcore/kaos#1911 CON-03).
+func (g *Graveler) IsBranchBlocked(ctx context.Context, repository *RepositoryRecord, branchID BranchID, action BranchProtectionBlockedAction) (bool, error) {
+	return g.protectedBranchesManager.IsBlocked(ctx, repository, branchID, action)
 }
 
 func (g *Graveler) CreateBareRepository(ctx context.Context, repositoryID RepositoryID, storageID StorageID, storageNamespace StorageNamespace, defaultBranchID BranchID, readOnly bool) (*RepositoryRecord, error) {
@@ -2642,14 +2678,20 @@ func (g *Graveler) Reset(ctx context.Context, repository *RepositoryRecord, bran
 	if isProtected {
 		return ErrWriteToProtectedBranch
 	}
+	return g.DiscardUncommitted(ctx, repository, branchID, opts...)
+}
 
+// DiscardUncommitted drops every uncommitted change of branchID, protected or not. Modified by
+// KAOS (PRD novelcore/kaos#1911 CON-03): Reset minus the protection check, for the platform's own
+// reconcile, which clears what cannot be committed on a protected branch. No API route calls it.
+func (g *Graveler) DiscardUncommitted(ctx context.Context, repository *RepositoryRecord, branchID BranchID, opts ...SetOptionsFunc) error {
 	options := NewSetOptions(opts)
 	if repository.ReadOnly && !options.Force {
 		return ErrReadOnlyRepository
 	}
 
 	tokensToDrop := make([]StagingToken, 0)
-	err = g.RefManager.BranchUpdate(ctx, repository, branchID, func(branch *Branch) (*Branch, error) {
+	err := g.RefManager.BranchUpdate(ctx, repository, branchID, func(branch *Branch) (*Branch, error) {
 		// Save current branch tokens for drop
 		tokensToDrop = append(tokensToDrop, branch.StagingToken)
 		tokensToDrop = append(tokensToDrop, branch.SealedTokens...)
@@ -3166,6 +3208,11 @@ func (g *Graveler) Merge(ctx context.Context, repository *RepositoryRecord, dest
 	// or some other branch changing operation. If commit is in-progress, then staging area wasn't empty after we checked so not retrying is ok.
 	// If another commit/merge succeeded, then the user should decide whether to retry the merge.
 	err = g.retryBranchUpdate(ctx, repository, destination, func(branch *Branch) (*Branch, error) {
+		// Modified by KAOS: compared with the branch record this update is conditional on, so a
+		// merge that lost the race to another is refused on its retry, never applied on top.
+		if options.ExpectedHead != "" && branch.CommitID != options.ExpectedHead {
+			return nil, fmt.Errorf("%w: %s is at %s, not at the expected %s", ErrPreconditionFailed, destination, branch.CommitID, options.ExpectedHead)
+		}
 		empty, err := g.isSealedEmpty(ctx, repository, branch)
 		if err != nil {
 			return nil, fmt.Errorf("check if staging empty: %w", err)

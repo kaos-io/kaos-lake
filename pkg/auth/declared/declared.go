@@ -50,6 +50,9 @@ type App struct {
 	// OutputsRepository is the app's own outputs repository, kept in place by pkg/kaos/repos
 	// (PRD novelcore/kaos#1283 F-01). Empty: the app has none.
 	OutputsRepository string `json:"outputs_repository,omitempty"`
+	// Datasets are the datasets the app's pipeline produces (PRD novelcore/kaos#1911 D-04): the
+	// repositories it alone may write, created by pkg/kaos/repos. A dataset has one producer.
+	Datasets []string `json:"datasets,omitempty"`
 }
 
 // Loaded holds the apps of the last successful load, for workload identity.
@@ -79,6 +82,20 @@ func (l *Loaded) Outputs() map[string]string {
 	return out
 }
 
+// Datasets returns each declared dataset's producer, by dataset: the app name (the user without
+// UserPrefix).
+func (l *Loaded) Datasets() map[string]string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	out := map[string]string{}
+	for user, a := range l.apps {
+		for _, d := range a.Datasets {
+			out[d] = strings.TrimPrefix(user, UserPrefix)
+		}
+	}
+	return out
+}
+
 // Set replaces the loaded apps.
 func (l *Loaded) Set(apps []App) {
 	byUser := make(map[string]App, len(apps))
@@ -101,6 +118,7 @@ func Load(dir string) ([]App, error) {
 	var apps []App
 	users := map[string]bool{}
 	keys := map[string]bool{}
+	producers := map[string]string{}
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -125,6 +143,16 @@ func Load(dir string) ([]App, error) {
 		case users[a.User] || keys[a.AccessKeyID]:
 			return nil, fmt.Errorf("%s: %w: user %q or its access key is declared twice", path, ErrInvalid, a.User)
 		}
+		for _, d := range a.Datasets {
+			if !repos.ValidName(d, repos.DatasetPrefix) {
+				return nil, fmt.Errorf("%s: %w: dataset %q must be %s followed by 3-48 lowercase letters, digits or hyphens",
+					path, ErrInvalid, d, repos.DatasetPrefix)
+			}
+			if by, ok := producers[d]; ok {
+				return nil, fmt.Errorf("%s: %w: dataset %q is already declared by %s; a dataset has one producer", path, ErrInvalid, d, by)
+			}
+			producers[d] = a.User
+		}
 		users[a.User], keys[a.AccessKeyID] = true, true
 		apps = append(apps, a)
 	}
@@ -148,7 +176,7 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL ti
 	declared := map[string]bool{}
 	for _, a := range apps {
 		declared[a.User] = true
-		if err := ensureApp(ctx, svc, a, exchangeTTL, o.legacyRepository, note); err != nil {
+		if err := ensureApp(ctx, svc, a, exchangeTTL, o, note); err != nil {
 			return changes, fmt.Errorf("app user %s: %w", a.User, err)
 		}
 	}
@@ -237,7 +265,7 @@ func sameStatement(a, b model.Statement) bool {
 	return a.Effect == b.Effect && a.Resource == b.Resource && slices.Equal(a.Action, b.Action) && len(a.Condition) == 0 && len(b.Condition) == 0
 }
 
-func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Duration, legacyRepository string, note func(string, ...any)) error {
+func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Duration, o options, note func(string, ...any)) error {
 	_, err := svc.GetUser(ctx, a.User)
 	if errors.Is(err, auth.ErrNotFound) {
 		if _, err := svc.CreateUser(ctx, &model.User{Username: a.User, CreatedAt: time.Now()}); err != nil {
@@ -258,7 +286,7 @@ func ensureApp(ctx context.Context, svc auth.Service, a App, exchangeTTL time.Du
 		}
 		note("removed user %s from %s", a.User, g.DisplayName)
 	}
-	if err := ensureAppPolicy(ctx, svc, a, legacyRepository, note); err != nil {
+	if err := ensureAppPolicy(ctx, svc, a, o.legacyRepository, o.writable(ctx, a), note); err != nil {
 		return err
 	}
 	return setCredentials(ctx, svc, a.User, &a, exchangeTTL, note)
@@ -306,7 +334,32 @@ func setCredentials(ctx context.Context, svc auth.Service, user string, want *Ap
 // Option tunes Reconcile and Run.
 type Option func(*options)
 
-type options struct{ legacyRepository string }
+type options struct {
+	legacyRepository string
+	produced         func(ctx context.Context, dataset, app string) bool
+}
+
+// writable returns the datasets a declares that it may write now: those produced reports ready.
+// Without WithProducedDatasets, none.
+func (o options) writable(ctx context.Context, a App) []string {
+	var out []string
+	for _, d := range a.Datasets {
+		if o.produced != nil && o.produced(ctx, d, strings.TrimPrefix(a.User, UserPrefix)) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// WithProducedDatasets tells Reconcile which declared datasets are ready to be written by their
+// app (PRD novelcore/kaos#1911 CON-02, CON-03): ready reports whether dataset exists as app's own
+// with its main protected (repos.ProducedBy). An app gets its write rights on a declared dataset
+// only while ready says so, and loses them on the next pass after it stops; until then, and
+// without this option, it only reads it. So the app never holds the commit right on a main that
+// is someone else's or unprotected, whichever of the two reconciles runs first.
+func WithProducedDatasets(ready func(ctx context.Context, dataset, app string) bool) Option {
+	return func(o *options) { o.produced = ready }
+}
 
 // WithLegacyRepository lets every app read and write the named repository too: the project
 // repository that apps created before PRD novelcore/kaos#1283 still write their outputs to.

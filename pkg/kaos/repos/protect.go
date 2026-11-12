@@ -4,6 +4,7 @@ package repos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -22,6 +23,14 @@ var protectedActions = []graveler.BranchProtectionBlockedAction{
 	graveler.BranchProtectionBlockedAction_COMMIT,
 }
 
+// MergeNeedsExpectedHead reports whether a merge into branch of a repository labelled md must name
+// the head it expects (PRD novelcore/kaos#1911 CON-03): main of a dataset a pipeline produces.
+// Each promotion replaces main's content with one run's, and a merge keeps what only the
+// destination has, so a promotion staged from an older head would mix two runs.
+func MergeNeedsExpectedHead(md graveler.RepositoryMetadata, branch string) bool {
+	return md[KeyProducer] != "" && branch == protectedBranch
+}
+
 // ProtectionCatalog is what ReconcileProtection needs of the lakeFS catalog.
 type ProtectionCatalog interface {
 	GetBranchProtectionRules(ctx context.Context, repositoryID string) (*graveler.BranchProtectionRules, *string, error)
@@ -35,18 +44,80 @@ type ProtectionCatalog interface {
 // main). It returns a description of each change.
 func ReconcileProtection(ctx context.Context, c Catalog, p ProtectionCatalog) ([]string, error) {
 	var changes []string
+	var failed []error
 	err := forEachRepository(ctx, c, DatasetPrefix, func(r *catalog.Repository) error {
+		// One dataset that cannot be read or protected does not leave the others open.
 		md, err := c.GetRepositoryMetadata(ctx, r.Name)
-		if err != nil || md[KeyKind] != KindDataset {
-			return err
+		if err != nil {
+			failed = append(failed, fmt.Errorf("repository %s: %w", r.Name, err))
+			return nil
+		}
+		if md[KeyKind] != KindDataset {
+			return nil
 		}
 		changed, err := protect(ctx, p, r.Name)
+		if err != nil {
+			failed = append(failed, fmt.Errorf("repository %s: %w", r.Name, err))
+			return nil
+		}
 		if changed {
 			changes = append(changes, fmt.Sprintf("protected main of %s: only a merge may change it", r.Name))
 		}
-		return err
+		return nil
 	})
-	return changes, err
+	if err != nil {
+		failed = append(failed, err)
+	}
+	return changes, errors.Join(failed...)
+}
+
+// ProducerCatalog is what ProducedBy reads of the lakeFS catalog.
+type ProducerCatalog interface {
+	GetRepositoryMetadata(ctx context.Context, repository string) (graveler.RepositoryMetadata, error)
+	ProtectionCatalog
+	// IsBranchBlocked answers from the rules the write paths enforce, which lag the stored ones.
+	IsBranchBlocked(ctx context.Context, repository, branch string, action graveler.BranchProtectionBlockedAction) (bool, error)
+}
+
+// ProducedBy reports whether dataset is ready for app to write (PRD novelcore/kaos#1911 CON-02,
+// CON-03): the repository exists, is labelled kaos.producer=app, and its main refuses direct
+// writes and commits. pkg/auth/declared grants an app its write rights on a dataset only while
+// this holds, so the app never holds the commit right on a main that is not its own or not
+// protected, whichever of the two reconciles runs first. Protected means both that the stored
+// rules block direct writes and commits on main and that the write paths already enforce it: they
+// read the rules through a cache that lags a few seconds behind a new rule.
+func ProducedBy(ctx context.Context, c ProducerCatalog, dataset, app string) (bool, error) {
+	md, err := c.GetRepositoryMetadata(ctx, dataset)
+	if errors.Is(err, graveler.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if app == "" || md[KeyProducer] != app {
+		return false, nil
+	}
+	rules, _, err := c.GetBranchProtectionRules(ctx, dataset)
+	if err != nil {
+		return false, err
+	}
+	if rules == nil {
+		return false, nil
+	}
+	blocked := rules.BranchPatternToBlockedActions[protectedBranch]
+	if blocked == nil {
+		return false, nil
+	}
+	for _, a := range protectedActions {
+		if !slices.Contains(blocked.Value, a) {
+			return false, nil
+		}
+		enforced, err := c.IsBranchBlocked(ctx, dataset, protectedBranch, a)
+		if err != nil || !enforced {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // protect makes sure main of repo blocks protectedActions; it reports whether it changed the rules.

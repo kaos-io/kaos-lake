@@ -36,7 +36,8 @@ func (fake) ListTags(_ context.Context, r, _ string, _ int, _ string) ([]*catalo
 	if r != "dataset-cars" {
 		return nil, false, nil
 	}
-	return []*catalog.Tag{{ID: "v2", CommitID: "c2"}, {ID: "v10", CommitID: "c10"}, {ID: "vnext", CommitID: "x"}}, false, nil
+	return []*catalog.Tag{{ID: "k-7f3a", CommitID: "k1"}, {ID: "v2", CommitID: "c2"}, {ID: "v10", CommitID: "c10"},
+		{ID: "vnext", CommitID: "x"}, {ID: "golden", CommitID: "g"}}, false, nil
 }
 func (fake) GetBranchReference(_ context.Context, r, b string) (string, error) {
 	return "head-" + r, nil
@@ -47,7 +48,9 @@ func TestList(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []datacatalog.Dataset{
 		{Name: "dataset-cars", Description: "cars", Location: "europe-west1 · Belgium", Template: "yolo", Latest: "head-dataset-cars",
-			Versions: []datacatalog.Version{{Tag: "v10", Commit: "c10"}, {Tag: "v2", Commit: "c2"}}},
+			// vN newest first, then named versions (PRD novelcore/kaos#1911 D-03); never a kept run's k-* tag.
+			Versions: []datacatalog.Version{{Tag: "v10", Commit: "c10"}, {Tag: "v2", Commit: "c2"},
+				{Tag: "golden", Commit: "g"}, {Tag: "vnext", Commit: "x"}}},
 		{Name: "dataset-default", Default: true, Latest: "head-dataset-default", Versions: []datacatalog.Version{}},
 	}, got)
 }
