@@ -559,6 +559,22 @@ func (c *Catalog) CreateRepository(ctx context.Context, repository string, stora
 type metadataStore interface {
 	CreateRepositoryWithMetadata(ctx context.Context, repositoryID graveler.RepositoryID, storageID graveler.StorageID, storageNamespace graveler.StorageNamespace, branchID graveler.BranchID, readOnly bool, metadata graveler.RepositoryMetadata) (*graveler.RepositoryRecord, error)
 	IsBranchBlocked(ctx context.Context, repository *graveler.RepositoryRecord, branchID graveler.BranchID, action graveler.BranchProtectionBlockedAction) (bool, error)
+	DiscardUncommitted(ctx context.Context, repository *graveler.RepositoryRecord, branchID graveler.BranchID, opts ...graveler.SetOptionsFunc) error
+}
+
+// DiscardUncommitted drops every uncommitted change of branch, protected or not: ResetBranch
+// without the protection check, for the platform's own reconcile. Modified by KAOS (PRD
+// novelcore/kaos#1911 CON-03).
+func (c *Catalog) DiscardUncommitted(ctx context.Context, repositoryID string, branch string) error {
+	store, ok := c.Store.(metadataStore)
+	if !ok {
+		return fmt.Errorf("discard uncommitted changes: %w", graveler.ErrInvalid)
+	}
+	repository, err := c.getRepository(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	return store.DiscardUncommitted(ctx, repository, graveler.BranchID(branch))
 }
 
 // CreateRepositoryWithMetadata is CreateRepository for a repository that carries metadata from

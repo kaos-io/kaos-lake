@@ -5490,7 +5490,7 @@ func (c *Controller) CreateTag(w http.ResponseWriter, r *http.Request, body apig
 		if c.handleAPIError(ctx, w, r, err) {
 			return
 		}
-		if err := repos.ValidateTag(labels, body.Id); err != nil {
+		if err := repos.ValidateTag(repository, labels, body.Id); err != nil {
 			writeError(w, r, http.StatusBadRequest, err)
 			return
 		}

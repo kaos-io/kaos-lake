@@ -2669,14 +2669,20 @@ func (g *Graveler) Reset(ctx context.Context, repository *RepositoryRecord, bran
 	if isProtected {
 		return ErrWriteToProtectedBranch
 	}
+	return g.DiscardUncommitted(ctx, repository, branchID, opts...)
+}
 
+// DiscardUncommitted drops every uncommitted change of branchID, protected or not. Modified by
+// KAOS (PRD novelcore/kaos#1911 CON-03): Reset minus the protection check, for the platform's own
+// reconcile, which clears what cannot be committed on a protected branch. No API route calls it.
+func (g *Graveler) DiscardUncommitted(ctx context.Context, repository *RepositoryRecord, branchID BranchID, opts ...SetOptionsFunc) error {
 	options := NewSetOptions(opts)
 	if repository.ReadOnly && !options.Force {
 		return ErrReadOnlyRepository
 	}
 
 	tokensToDrop := make([]StagingToken, 0)
-	err = g.RefManager.BranchUpdate(ctx, repository, branchID, func(branch *Branch) (*Branch, error) {
+	err := g.RefManager.BranchUpdate(ctx, repository, branchID, func(branch *Branch) (*Branch, error) {
 		// Save current branch tokens for drop
 		tokensToDrop = append(tokensToDrop, branch.StagingToken)
 		tokensToDrop = append(tokensToDrop, branch.SealedTokens...)

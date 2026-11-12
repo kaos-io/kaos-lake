@@ -322,7 +322,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
     repository exist (`CreateRepositoryWithMetadata`, `pkg/graveler/ref/manager.go`), so it is
     never seen without them. Upstream creates a repository and its metadata in separate calls. The
     same pass protects its `main` and announces it (the dataset event), so pipelines can pick it
-    before its first run. The API refuses to create a repository whose name an app declares, for
+    before its first run. It is not created at once: people are kept out first (see *People*), so
+    the repository appears about half a minute after the declaration with the default settings,
+    and each pass until then logs `<name> is declared and not created yet: … it is created after
+    <time>`. The API refuses to create a repository whose name an app declares, for
     every caller (400, `<name> is a dataset produced by <app>: the platform creates it`), so
     nobody can make it first.
   - *Never adopting.* A declared dataset that already exists is the app's only if it carries
@@ -340,7 +343,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
     the repository exists, carries `kaos.producer=<app>`, its stored rules block `staging_write`
     and `commit` on `main`, and the write paths already enforce that (they read the rules through
     a cache a few seconds behind; `repos.ProducedBy` asks both, on every pass of the app-users
-    reconcile). Until then, and again one pass after it stops being true, the app only reads it.
+    reconcile). Until then the app only reads it; and when it stops being true, or the app no
+    longer declares the dataset, the app is back to reading within one pass plus the policy cache
+    lifetime (about 20 s by default): its policy is rewritten in that pass, and a session keeps the
+    policies it read for `auth.cache.ttl` plus `auth.cache.jitter`.
     The two reconciles run on their own intervals; in either order the app is not given the commit
     right on a `main` that is not its own or not yet protected. So the commit right on `main`
     lands only a merge. That rests on two things: protection enforced before the right is given,
@@ -349,9 +355,10 @@ To release, open a pull request that bumps `kaos/VERSION`.
     One case is outside it, and only an admin can cause it: an admin who removes the protection
     rule of a produced dataset's `main` leaves the app, which already holds its rights, able to
     upload straight to `main` and to commit there until the next app-users pass takes the rights
-    back and the next repositories pass restores the rule (one interval each). Objects uploaded to
-    `main` and not committed then make every promotion fail (lakeFS refuses to merge into a branch
-    with uncommitted changes); only an admin can reset `main`.
+    back and the next repositories pass restores the rule (one interval each, plus the policy
+    cache lifetime for the rights). Objects uploaded to `main` and not committed would make every
+    promotion fail (lakeFS refuses to merge into a branch with uncommitted changes) and nobody can
+    reset a protected branch through the API, so the platform clears them: see *Strays*.
   - *People.* The repositories reconcile keeps the policy `KAOSProducedDatasets` listing every
     repository labelled `kaos.producer` and attached to SuperUsers, Developers and Viewers. On
     those repositories it denies writing and deleting objects, every branch change (create,
@@ -365,13 +372,33 @@ To release, open a pull request that bumps `kaos/VERSION`.
     restricted: an admin can detach any policy and change any rule, so a denial there would only
     look like a guarantee, and repairing a dataset needs someone who can write it. Groups other
     than those three (a custom group mapped from a token claim) are not covered.
+    A session keeps the policies it read for the auth cache's lifetime (`auth.cache.ttl` 20 s plus
+    `auth.cache.jitter` 3 s by default, per process), so a rule written when a dataset appears
+    would reach an editor with a session open about 20 s too late. The order prevents that, and
+    holds with several replicas: the policy names repositories by name, so the reconcile lists a
+    declared dataset in it before the repository exists, and creates the repository only once the
+    policy has not changed for longer than that lifetime plus a 10 s margin
+    (`repos.SettleMargin`). "Since when" is the policy's own timestamp, stored with it in the auth
+    store: a restart or another replica reads the same value, nothing is kept in process memory.
+    Any change to the list, or a group getting the policy back, restarts the wait for the datasets
+    not created yet. A declared name whose repository exists without the label is not listed: it
+    is someone else's. If the policy cannot be written, no produced dataset is created.
+  - *Strays.* Nothing stages on `main` of a produced dataset, so an uncommitted object there is not
+    a run's (it can only get there while an admin has the protection off). Every pass, the
+    repositories reconcile discards the uncommitted changes on `main` of each repository labelled
+    `kaos.producer`, through a path of its own that the protection does not stop
+    (`DiscardUncommitted`; no API route calls it), and logs a warning with the dataset, the count
+    and up to 20 object names. It never touches committed data, another branch, or a repository
+    without the label; a repository whose uncommitted changes cannot be read is left alone and
+    reported.
   - *The label.* `kaos.producer`, and every key under `kaos.producer.`, is a platform key: the
     metadata API refuses to set or delete it for every caller, admins included. There is no route
     in this image that changes a dataset's producer or hands a produced dataset to people; it is
     not a side effect of changing an app's file either (the new app is refused, see above). Moving
     a dataset that holds data to another producer needs a platform change that does not exist yet.
     A dataset no app declares any longer keeps its label and its data, stays closed to people, and
-    its former producer is back to read-only; the same app declaring it again gets it back.
+    its former producer is back to read-only within one pass plus the policy cache lifetime (about
+    20 s by default); the same app declaring it again gets it back.
   - *Reserved tag prefix.* `k-` is reserved, in every dataset, for the tags of kept runs: such a
     tag is never listed as a version and never fires the dataset event. Nothing in kaos-lake
     creates named versions (the UI's Release version creates `vN` only), so a person can create a
@@ -381,4 +408,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
     dataset that is neither `main` nor `run-*` the producer can stage objects but never commit
     them.
   Code: `pkg/auth/declared` (`WithProducedDatasets`), `pkg/kaos/repos` (`repos.go`, `protect.go`,
-  `people.go`).
+  `people.go`, `strays.go`), and in the core, each marked: `pkg/catalog/catalog.go`
+  (`CreateRepositoryWithMetadata`, `IsBranchBlocked`, `DiscardUncommitted`, `metadataStore`),
+  `pkg/graveler/graveler.go` (`CreateRepositoryWithMetadata`, `IsBranchBlocked`,
+  `DiscardUncommitted`, `MetadataRepositoryCreator`), `pkg/graveler/ref/manager.go`
+  (`CreateRepositoryWithMetadata`).

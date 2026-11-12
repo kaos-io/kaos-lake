@@ -242,12 +242,15 @@ var runCmd = &cobra.Command{
 		// novelcore/kaos#1911 F-10) in place.
 		// Datasets shared with other projects get read-only grants in the multi-user store (F-12).
 		if r := baseCfg.KAOS.Repositories; r.StorageNamespacePrefix != "" {
+			authCache := cfg.AuthConfig().GetBaseAuthConfig().Cache
 			var shares repos.AuthService
 			if multiuser.Enabled(cfg) {
 				shares = authService
 			}
 			go repos.Run(ctx, c, shares, r.StorageID, r.StorageNamespacePrefix, r.Location, r.DefaultDataset,
-				declaredApps.Outputs, declaredApps.Datasets, r.Interval, logger)
+				declaredApps.Outputs, declaredApps.Datasets, r.Interval,
+				// The longest a session keeps the policies it read, and a margin.
+				authCache.TTL+authCache.Jitter+repos.SettleMargin, logger)
 		}
 
 		// Setup usage reporter - it is no longer possible to disable it

@@ -60,6 +60,7 @@ func TestController_NoNumberedVersionsOnProducedDatasets(t *testing.T) {
 		resp := tag("dataset-clean", id)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode(), id)
 		require.Contains(t, resp.JSON400.Message, "vN is for datasets people upload")
+		require.Contains(t, resp.JSON400.Message, "dataset-clean is produced by yolo")
 	}
 	_, err := deps.catalog.GetTag(ctx, "dataset-clean", "v1")
 	require.ErrorIs(t, err, graveler.ErrNotFound)
