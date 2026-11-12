@@ -282,6 +282,14 @@ func TestReconcile_PerAppRights(t *testing.T) {
 	require.True(t, allowed(t, svc, a.User, permissions.CreateBranchAction, permissions.BranchArn("outputs-yolo", "run-1")))
 	require.True(t, allowed(t, svc, a.User, permissions.CreateTagAction, permissions.TagArn("outputs-yolo", "t")))
 	require.False(t, allowed(t, svc, a.User, permissions.DeleteRepositoryAction, permissions.RepoArn("outputs-yolo")))
+	// Never a lakeFS action (hook), which would run later with someone else's rights; the path
+	// next to it is as before.
+	for _, action := range []string{permissions.WriteObjectAction, permissions.DeleteObjectAction} {
+		require.False(t, allowed(t, svc, a.User, action, permissions.ObjectArn("outputs-yolo", "_lakefs_actions/planted.yaml")), action)
+		require.False(t, allowed(t, svc, a.User, action, permissions.ObjectArn("outputs-yolo", "_lakefs_actions/sub/planted.yaml")), action)
+		require.True(t, allowed(t, svc, a.User, action, permissions.ObjectArn("outputs-yolo", "_lakefs_actions-notes/a")), action)
+	}
+	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, permissions.ObjectArn("outputs-yolo", "_lakefs_actions/planted.yaml")))
 	// Another app's outputs, and other repositories: nothing.
 	require.True(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("outputs-yolo")))
 	require.False(t, allowed(t, svc, a.User, permissions.ReadObjectAction, obj("outputs-mlci")))
@@ -441,6 +449,15 @@ func TestReconcile_DeclaredDatasetRights(t *testing.T) {
 		{permissions.CreateTagAction, tag(people, "k-7f3a"), false},
 		{permissions.WriteObjectAction, obj(own+"2", "a"), false}, // no prefix match
 		{permissions.CreateRepositoryAction, permissions.RepoArn("dataset-new"), false},
+		// A lakeFS action (hook) runs with the rights of whoever triggers it later: the app never
+		// writes one, by upload, delete, copy (a write on the destination) or any other write.
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actions/planted.yaml"), false},
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actions/sub/planted.yaml"), false},
+		{permissions.DeleteObjectAction, obj(own, "_lakefs_actions/planted.yaml"), false},
+		{permissions.ReadObjectAction, obj(own, "_lakefs_actions/planted.yaml"), true},
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actions-notes/a"), true},
+		{permissions.WriteObjectAction, obj(own, "images/_lakefs_actions/a"), true},
+		{permissions.WriteObjectAction, obj(own, "_lakefs_actionsx"), true},
 	} {
 		require.Equal(t, c.want, allowed(t, svc, a.User, c.action, c.resource), "%s on %s", c.action, c.resource)
 	}

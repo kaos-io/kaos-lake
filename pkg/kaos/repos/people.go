@@ -28,8 +28,8 @@ var peopleGroups = []string{setup.SuperUsersGroup, setup.DevelopersGroup, setup.
 
 // PeoplePolicy denies, on each of the produced datasets, what would change its content or its run
 // versions: writing and deleting objects, every branch change (create, delete, commit, merge,
-// revert, reset), opening or changing pull requests, and creating or deleting the k-* tags of
-// kept runs. A denial wins over any
+// revert, reset), opening or changing pull requests, creating or deleting the k-* tags of
+// kept runs, and deleting the repository. A denial wins over any
 // allowance. Reading stays, and so does naming a version: a tag that is not k-* on a commit that
 // exists.
 func PeoplePolicy(datasets []string) *model.Policy {
@@ -46,6 +46,9 @@ func PeoplePolicy(datasets []string) *model.Policy {
 		// pull request there could never merge, so none is opened or changed.
 		deny(permissions.RepoArn(d), permissions.CreateCommitAction, permissions.CreateBranchAction, permissions.CreateTagAction,
 			permissions.WritePullRequestAction)
+		// SuperUsers hold fs:*: without this one of them deletes the repository, and every sealed
+		// version with it. Admins still can.
+		deny(permissions.RepoArn(d), permissions.DeleteRepositoryAction)
 	}
 	return &model.Policy{CreatedAt: time.Now(), DisplayName: ProducedPolicy, Statement: st}
 }

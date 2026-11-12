@@ -127,6 +127,17 @@ func TestReconcilePeople(t *testing.T) {
 	check("viewer@example.com", reads(produced))
 	check("admin", writes(produced, true))
 
+	// Nobody in those groups deletes a produced dataset, SuperUsers (who hold fs:*) included: its
+	// sealed versions would go with it. Admins still can; a dataset people upload is as before.
+	deletes := func(repo string, want bool) []row {
+		return []row{{permissions.DeleteRepositoryAction, permissions.RepoArn(repo), want}}
+	}
+	for _, user := range []string{"dev@example.com", "super@example.com", "viewer@example.com"} {
+		check(user, deletes(produced, false))
+	}
+	check("super@example.com", deletes(uploaded, true))
+	check("admin", deletes(produced, true))
+
 	_, again, err := repos.ReconcilePeople(ctx, f, svc, nil)
 	require.NoError(t, err)
 	require.Empty(t, again, "a second pass changes nothing")
@@ -249,4 +260,66 @@ func TestRun_PeopleAreKeptOutBeforeTheDatasetExists(t *testing.T) {
 	require.Equal(t, graveler.RepositoryMetadata{repos.KeyKind: "dataset", repos.KeyProducer: "yolo"}, f.md["dataset-new"])
 	cancel()
 	<-done
+}
+
+// PRD novelcore/kaos#1911 CON-02: a restart between "the dataset is listed in the people policy"
+// and "the repository is created". The new process reads the policy's stored timestamp: it
+// neither creates the repository at once (sessions may not have the rule yet) nor waits a whole
+// settle again (it would never end if the process restarted often): it waits out the remainder.
+func TestRun_RestartBetweenListingAndCreating(t *testing.T) {
+	const settle = 3 * time.Second
+	svc := peopleStore(t)
+	f := newFake()
+	declared := func() map[string]string { return map[string]string{"dataset-new": "yolo"} }
+	start := func(ctx context.Context) <-chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			repos.Run(ctx, f, svc, "", prefix, "", "", func() map[string]string { return nil }, declared,
+				50*time.Millisecond, settle, logging.ContextUnavailable())
+		}()
+		return done
+	}
+	exists := func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.repos["dataset-new"] != nil
+	}
+
+	// The first process lists the dataset and stops before it is created.
+	first, stop := context.WithCancel(t.Context())
+	done := start(first)
+	var listedAt time.Time
+	require.Eventually(t, func() bool {
+		p, err := svc.GetPolicy(t.Context(), repos.ProducedPolicy)
+		if err != nil || len(p.Statement) == 0 {
+			return false
+		}
+		listedAt = p.CreatedAt
+		return true
+	}, 5*time.Second, 5*time.Millisecond)
+	stop()
+	<-done
+	require.False(t, exists(), "listing creates nothing")
+
+	// The second process starts later, from the stored timestamp alone.
+	time.Sleep(1 * time.Second)
+	second, stop2 := context.WithCancel(t.Context())
+	defer stop2()
+	done2 := start(second)
+	var createdAt time.Time
+	for deadline := time.Now().Add(2 * settle); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if exists() {
+			createdAt = time.Now()
+			break
+		}
+	}
+	stop2()
+	<-done2
+	require.False(t, createdAt.IsZero(), "the dataset was never created: the new process waits forever")
+	require.False(t, createdAt.Before(listedAt.Add(settle)), "created %s before the listing settled", listedAt.Add(settle).Sub(createdAt))
+	require.Less(t, createdAt.Sub(listedAt), settle+2500*time.Millisecond, "the new process waited a whole settle again")
+	policy, err := svc.GetPolicy(t.Context(), repos.ProducedPolicy)
+	require.NoError(t, err)
+	require.WithinDuration(t, listedAt, policy.CreatedAt, time.Millisecond, "the restart rewrote the policy")
 }

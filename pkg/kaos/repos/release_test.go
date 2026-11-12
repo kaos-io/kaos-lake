@@ -36,6 +36,25 @@ func TestReleaseTag(t *testing.T) {
 	}
 }
 
+// PRD novelcore/kaos#1911 D-03: on a produced dataset a tag is refused when it is vN, latest, main
+// or made only of hexadecimal characters (lakeFS resolves a tag before a commit prefix); a
+// dataset people upload takes any.
+func TestValidateTag(t *testing.T) {
+	produced := map[string]string{repos.KeyProducer: "yolo"}
+	for _, id := range []string{"v1", "v12"} {
+		require.ErrorIs(t, repos.ValidateTag("dataset-clean", produced, id), repos.ErrNumberedVersion, id)
+	}
+	for _, id := range []string{"latest", "main", "abcd", "ABCD", "0123456789ab", "deadbeef", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"} {
+		require.ErrorIs(t, repos.ValidateTag("dataset-clean", produced, id), repos.ErrReservedTagName, id)
+	}
+	for _, id := range []string{"golden", "abc", "beef-1", "g00d", "latest-2", "main2", "v1.0", "k-7f3a", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"} {
+		require.NoError(t, repos.ValidateTag("dataset-clean", produced, id), id)
+	}
+	for _, id := range []string{"v1", "latest", "main", "deadbeef"} {
+		require.NoError(t, repos.ValidateTag("dataset-cars", map[string]string{repos.KeyKind: "dataset"}, id), id)
+	}
+}
+
 type count struct{ n atomic.Int32 }
 
 func (c *count) Submit(context.Context) error { c.n.Add(1); return nil }

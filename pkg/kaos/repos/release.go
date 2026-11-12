@@ -35,13 +35,31 @@ func ReleaseTag(repo, tag string) bool {
 // ErrNumberedVersion refuses a vN tag on a dataset a pipeline produces.
 var ErrNumberedVersion = errors.New("a dataset a pipeline produces has commits, latest and names; vN is for datasets people upload")
 
+// ErrReservedTagName refuses a tag on a dataset a pipeline produces that could be taken for, or
+// shadow, something else.
+var ErrReservedTagName = errors.New("the name is reserved; name a version with letters that cannot be mistaken for a commit id")
+
 // ValidateTag checks a tag a caller creates on repository repo, labelled md. A dataset a pipeline
-// produces takes no numbered release (PRD novelcore/kaos#1911 D-03).
+// produces takes no numbered release and no reserved name (PRD novelcore/kaos#1911 D-03).
 func ValidateTag(repo string, md map[string]string, tag string) error {
-	if md[KeyProducer] != "" && VersionTag.MatchString(tag) {
+	switch {
+	case md[KeyProducer] == "":
+	case VersionTag.MatchString(tag):
 		return fmt.Errorf("%w: %s is produced by %s, name the version instead of tagging it %s", ErrNumberedVersion, repo, md[KeyProducer], tag)
+	case ReservedTagName(tag):
+		return fmt.Errorf("%w: %s is produced by %s, and %s is %s", ErrReservedTagName, repo, md[KeyProducer], tag, "latest, main or only hexadecimal characters")
 	}
 	return nil
+}
+
+// commitLike matches a name lakeFS could resolve as a commit id or its prefix.
+var commitLike = regexp.MustCompile(`^[0-9a-fA-F]{4,64}$`)
+
+// ReservedTagName reports whether tag may not be created on a dataset a pipeline produces: latest
+// and main are names the platform moves, and lakeFS resolves a tag before a commit prefix, so a
+// tag made only of hexadecimal characters could shadow a sealed commit (PRD novelcore/kaos#1911 D-03).
+func ReservedTagName(tag string) bool {
+	return tag == "latest" || tag == "main" || commitLike.MatchString(tag)
 }
 
 // NoteRelease tells the project's ML apps that a version of repo was released or deleted, when it

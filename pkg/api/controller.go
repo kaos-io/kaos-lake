@@ -5516,9 +5516,9 @@ func (c *Controller) CreateTag(w http.ResponseWriter, r *http.Request, body apig
 	ctx := r.Context()
 	c.LogAction(ctx, "create_tag", r, repository, body.Id, "")
 
-	// Modified by KAOS: no numbered release on a dataset a pipeline produces (PRD
-	// novelcore/kaos#1911 D-03).
-	if repos.VersionTag.MatchString(body.Id) {
+	// Modified by KAOS: no numbered release and no reserved name on a dataset a pipeline produces
+	// (PRD novelcore/kaos#1911 D-03).
+	if repos.VersionTag.MatchString(body.Id) || repos.ReservedTagName(body.Id) {
 		labels, err := c.Catalog.GetRepositoryMetadata(ctx, repository)
 		if c.handleAPIError(ctx, w, r, err) {
 			return

@@ -349,7 +349,12 @@ To release, open a pull request that bumps `kaos/VERSION`.
     and each pass until then logs `<name> is declared and not created yet: … it is created after
     <time>`. The API refuses to create a repository whose name an app declares, for
     every caller (400, `<name> is a dataset produced by <app>: the platform creates it`), so
-    nobody can make it first.
+    nobody can make it first, while the declarations are loaded. When they are not (for example
+    another app's file is half-written: the whole load is skipped, `pkg/auth/declared`), the name
+    is not declared and a person can create a repository with it. That repository is then never
+    adopted (see *Never adopting*): the app has no write access to it until an admin removes the
+    person's repository, and the repositories reconcile logs `Declared repositories not applied`
+    on every pass until then.
   - *Never adopting.* A declared dataset that already exists is the app's only if it carries
     `kaos.producer=<that app>`. Every other existing repository is left exactly as it is, whatever
     it holds or does not hold: the project's default dataset, a dataset people uploaded, another
@@ -371,7 +376,9 @@ To release, open a pull request that bumps `kaos/VERSION`.
     policies it read for `auth.cache.ttl` plus `auth.cache.jitter`.
     The two reconciles run on their own intervals; in either order the app is not given the commit
     right on a `main` that is not its own or not yet protected. So the commit right on `main`
-    lands only a merge. That rests on two things: protection enforced before the right is given,
+    lands only a merge. That needs both parts of this change, the dataset rights and
+    the merge that names `expected_head`; no app may declare a dataset on a build without the
+    second. That rests on two things: protection enforced before the right is given,
     and "A branch protected from commits refuses every commit" above, without which a cherry-pick,
     a revert or an import would pass (upstream checks only a direct commit and a hard reset).
     One case is outside it, and only an admin can cause it: an admin who removes the protection
@@ -386,14 +393,23 @@ To release, open a pull request that bumps `kaos/VERSION`.
     repository labelled `kaos.producer` and attached to SuperUsers, Developers and Viewers. On
     those repositories it denies writing and deleting objects, every branch change (create,
     delete, commit and so merge, cherry-pick and import, revert and reset), opening and changing
-    pull requests (one could never merge there), creating and deleting `k-*` tags, and commit
-    records; in lakeFS a denial wins over any allowance. People keep reading, describing the
+    pull requests (one could never merge there: the rule "`main` of a produced dataset moves only
+    by a merge that names `expected_head`" needs both parts of this change, the dataset rights and
+    the expected-head merge, and no app may declare a dataset on a build without the second), creating and deleting `k-*` tags, commit
+    records, and deleting the repository (SuperUsers hold `fs:*`, so without this denial one of
+    them deletes a produced dataset and every sealed version with it; Admins still can); in lakeFS a denial wins over any allowance. People keep reading, describing the
     dataset (labels that are not the platform's), and naming versions: creating and deleting tags
     that are not `k-*` on commits that exist. A numbered release is not a name: a `vN` tag on a
     produced dataset is refused for every caller (400; such a dataset has commits, `latest` and
-    names, PRD D-03), and the Datasets page does not offer Release version there. Admins are not
-    restricted: an admin can detach any policy and change any rule, so a denial there would only
-    look like a guarantee, and repairing a dataset needs someone who can write it. Groups other
+    names, PRD D-03), and so is a tag named `latest` or `main`, or made only of hexadecimal characters
+    (`^[0-9a-fA-F]{4,64}$`): lakeFS resolves a tag before a commit prefix, so such a tag could
+    shadow a sealed commit or a moving name (400, the name is reserved; name a version with
+    letters that cannot be mistaken for a commit id). The Datasets page does not offer Release
+    version there. Admins are not restricted: an admin can detach any policy and change any rule,
+    so a denial there would only look like a guarantee, and repairing a dataset needs someone who
+    can write it. An Admin who is also in Developers, SuperUsers or Viewers is denied like any
+    member of those groups, because a denial wins: to repair a dataset, use an account that is in
+    Admins only. Groups other
     than those three (a custom group mapped from a token claim) are not covered.
     A session keeps the policies it read for the auth cache's lifetime (`auth.cache.ttl` 20 s plus
     `auth.cache.jitter` 3 s by default, per process), so a rule written when a dataset appears
@@ -406,6 +422,17 @@ To release, open a pull request that bumps `kaos/VERSION`.
     Any change to the list, or a group getting the policy back, restarts the wait for the datasets
     not created yet. A declared name whose repository exists without the label is not listed: it
     is someone else's. If the policy cannot be written, no produced dataset is created.
+  - *Lakefs actions.* A lakeFS action (hook, read from `_lakefs_actions/` of a commit) runs with
+    the rights of whoever triggers it, for example a person naming a version. An app could commit
+    one on a run branch and promote it by merge, and it would later run with a person's rights
+    and write datasets the app may not. So every `KAOSApp-<app>` policy denies writing and
+    deleting objects under `_lakefs_actions/*` in every repository (its produced datasets and its
+    outputs repository): upload, delete, copy into the prefix, stage, link and multipart all ask
+    for those two actions on the destination object, and a denial wins. Reading it and every
+    other path, `_lakefs_actions-notes/` included, are unchanged. That closes the app side only.
+    The platform should also switch lakeFS actions off in the lake's configuration
+    (`actions.enabled`, default `true` in `pkg/config/defaults.go`; the default is not changed in
+    the fork), since actions committed by anyone else, or before this rule, still run.
   - *Strays.* Nothing stages on `main` of a produced dataset, so an uncommitted object there is not
     a run's (it can only get there while an admin has the protection off). Every pass, the
     repositories reconcile discards the uncommitted changes on `main` of each repository labelled

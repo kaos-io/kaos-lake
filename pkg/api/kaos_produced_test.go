@@ -4,6 +4,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,42 @@ func TestController_NoNumberedVersionsOnProducedDatasets(t *testing.T) {
 		require.Equal(t, http.StatusCreated, tag("dataset-clean", id).StatusCode(), id)
 	}
 	require.Equal(t, http.StatusCreated, tag("dataset-cars", "v1").StatusCode())
+}
+
+// PRD novelcore/kaos#1911 D-03: lakeFS resolves a tag before a commit prefix, and `latest` and
+// `main` are names the platform moves. On a produced dataset a tag named like either, or made only
+// of hexadecimal characters (which could be taken for a commit id), is refused for every caller.
+// Names with other letters are not, and a dataset people upload takes any.
+func TestController_ReservedTagNamesOnProducedDatasets(t *testing.T) {
+	clt, deps := setupClientWithAdmin(t)
+	ctx := t.Context()
+	heads := map[string]string{}
+	for _, repo := range []string{"dataset-clean", "dataset-cars"} {
+		_, err := deps.catalog.CreateRepository(ctx, repo, config.SingleBlockstoreID, onBlock(deps, repo), "main", false)
+		require.NoError(t, err)
+		heads[repo] = mainHeadOf(t, deps, repo)
+	}
+	require.NoError(t, deps.catalog.UpdateRepositoryMetadata(ctx, "dataset-clean", map[string]string{"kaos.kind": "dataset", "kaos.producer": "yolo"}))
+	tag := func(repo, id string) *apigen.CreateTagResponse {
+		resp, err := clt.CreateTagWithResponse(ctx, repo, apigen.CreateTagJSONRequestBody{Id: id, Ref: heads[repo]})
+		require.NoError(t, err)
+		return resp
+	}
+	reserved := []string{"latest", "main", heads["dataset-clean"][:12], strings.ToUpper(heads["dataset-clean"][:12]), "deadbeef", "ABCD", "0123"}
+	for _, id := range reserved {
+		resp := tag("dataset-clean", id)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode(), id)
+		require.Contains(t, resp.JSON400.Message, "is reserved", id)
+		require.Contains(t, resp.JSON400.Message, "cannot be mistaken for a commit id", id)
+		_, err := deps.catalog.GetTag(ctx, "dataset-clean", id)
+		require.ErrorIs(t, err, graveler.ErrNotFound, id)
+	}
+	for _, id := range []string{"golden", "abc", "beef-1", "cafe_x", "g00d", "latest-2", "main2"} {
+		require.Equal(t, http.StatusCreated, tag("dataset-clean", id).StatusCode(), id)
+	}
+	for _, id := range []string{"latest", "deadbeef", "v1"} {
+		require.Equal(t, http.StatusCreated, tag("dataset-cars", id).StatusCode(), id)
+	}
 }
 
 func mainHeadOf(t *testing.T, deps *dependencies, repo string) string {

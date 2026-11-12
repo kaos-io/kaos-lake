@@ -39,6 +39,9 @@ const (
 	keptTags       = repos.KeptTagPrefix + "*"
 )
 
+// actionsPrefix is where lakeFS reads its actions (hooks) from, in each repository.
+const actionsPrefix = "_lakefs_actions/"
+
 // AppPolicyName is the name of the policy of app user user.
 func AppPolicyName(user string) string { return AppPolicyPrefix + strings.TrimPrefix(user, UserPrefix) }
 
@@ -76,6 +79,13 @@ func AppPolicy(a App, legacyRepository string, produced []string) *model.Policy 
 		allow([]string{permissions.CreateCommitAction}, permissions.BranchArn(d, promotedBranch))
 		allow([]string{permissions.CreateTagAction}, permissions.TagArn(d, keptTags))
 	}
+	// A lakeFS action (hook) is read from this prefix and runs with the rights of whoever triggers
+	// it, a person naming a version for one: the app never writes it, in any repository. Upload,
+	// delete, copy (a write on its destination), stage and link all ask for these two actions on
+	// the object. A denial wins over any allowance.
+	st = append(st, model.Statement{Effect: model.StatementEffectDeny,
+		Action:   []string{permissions.WriteObjectAction, permissions.DeleteObjectAction},
+		Resource: permissions.ObjectArn("*", actionsPrefix+"*")})
 	return &model.Policy{CreatedAt: time.Now(), DisplayName: AppPolicyName(a.User), Statement: st}
 }
 
