@@ -128,7 +128,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
   (the project's CI namespace), a created or deleted version tag on a `dataset-*` repository (`vN`, or
   any other name since PRD novelcore/kaos#1911 D-03; never a kept run's `k-*`), a repository
   labelled `kaos.kind=dataset`, and a deleted `dataset-*` repository make kaos-lake create ONE Workflow
-  there (`ml-ci-dataset-release`, as `dataset-release-sa`), through the Kubernetes API with its own
+  there (`ml-ci-dataset-release`, which runs as `dataset-release-sa`; the Workflow itself sets no
+  `serviceAccountName`, PRD 1533 F-26 K1, kaos.35), through the Kubernetes API with its own
   service-account token, which asks each of the project's ML apps to re-read the catalog and re-render
   its pipeline's `dataset` dropdown. Changes inside a 10 s window are one Workflow; one is also
   created at start, so a change lost while the server was down is caught up. Every path that creates a

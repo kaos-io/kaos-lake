@@ -115,7 +115,12 @@ func TestKubeSubmitterCreatesTheWorkflow(t *testing.T) {
 	meta := got[0]["metadata"].(map[string]any)
 	require.Equal(t, "proj-ci", meta["namespace"])
 	spec := got[0]["spec"].(map[string]any)
-	require.Equal(t, datasetevents.ServiceAccount, spec["serviceAccountName"])
+	// Strict templateReferencing: only the ref and ttlStrategy; the SA lives in the template.
+	keys := make([]string, 0, len(spec))
+	for k := range spec {
+		keys = append(keys, k)
+	}
+	require.ElementsMatch(t, []string{"workflowTemplateRef", "ttlStrategy"}, keys)
 	ref := spec["workflowTemplateRef"].(map[string]any)
 	require.Equal(t, datasetevents.Template, ref["name"])
 	require.Equal(t, true, ref["clusterScope"])
