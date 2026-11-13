@@ -152,6 +152,7 @@ func TestPeerCredentials_ReaderAppReadsOnlyWhatIsShared(t *testing.T) {
 	require.True(t, w.reads(t, user, "dataset-default"))
 	require.False(t, w.reads(t, user, "dataset-signs"), "shared with orbits, not with vision")
 	require.False(t, w.reads(t, user, "dataset-private"), "not shared with anyone")
+	require.False(t, w.reads(t, user, "dataset-draft"), "its label names vision, but it is not labelled a dataset")
 	require.False(t, w.reads(t, user, "outputs-yolo"))
 	for _, repo := range []string{"dataset-roads", "dataset-default", "dataset-signs", "dataset-private"} {
 		require.False(t, w.writes(t, user, repo), repo)
@@ -233,7 +234,6 @@ func TestPeerCredentials_WithdrawalRemovesAccess(t *testing.T) {
 	require.True(t, w.reads(t, user, "dataset-default"), "the other is not")
 
 	w.lake.md["dataset-default"][repos.KeySharedWith] = ""
-	w.lake.md["dataset-draft"][repos.KeySharedWith] = "" // shared with vision too, though not labelled a dataset yet
 	_, err = repos.ReconcileShares(ctx, w.lake, w.svc)
 	require.NoError(t, err)
 	require.False(t, w.reads(t, user, "dataset-default"))

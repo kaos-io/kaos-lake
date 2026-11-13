@@ -352,7 +352,8 @@ To release, open a pull request that bumps `kaos/VERSION`.
   whose group is gone or whose keys have all expired, with its keys. An app that is not a declared app of the reading
   project, a person, or the admin gets 403 from `/kaos/v1/shared-credentials`; the owner does not check that the app
   exists, because the owner trusts the project's machine key for what that project reads anyway. The owner's own apps and
-  the declared reconcile's users (`kaos-app-*`) are never touched. Code: `pkg/kaos/sharing/peercreds.go`,
+  the declared reconcile's users (`kaos-app-*`) are never touched. Only a repository labelled `kaos.kind=dataset` is granted: one carrying `kaos.shared_with` without that label
+  (the repositories reconcile labels every non-empty `dataset-*` one) is not, as `/kaos/v1/shared` never listed it. Code: `pkg/kaos/sharing/peercreds.go`,
   `pkg/auth/declared/declared.go` (`reapPeerUsers`), `pkg/kaos/repos/share.go` (`PeerUser`).
 - **"Shared with this project" on the Datasets page** (PRD novelcore/kaos#1283 F-12, release
   `1.86.0-kaos.20`). `GET /kaos/v1/shared-with-us`, behind the API's authentication, answers

@@ -62,3 +62,37 @@ func TestReconcileShares(t *testing.T) {
 	_, err = svc.GetGroup(ctx, repos.ConsumerGroupPrefix+"orbits")
 	require.ErrorIs(t, err, auth.ErrNotFound)
 }
+
+// A repository that is not (yet) labelled a dataset is not shared, whatever its kaos.shared_with says:
+// /kaos/v1/shared never lists it, so the grant must not reach it either. Labelled, it is granted.
+func TestReconcileShares_OnlyDatasets(t *testing.T) {
+	ctx := t.Context()
+	svc := acl.NewAuthService(kvtest.GetStore(ctx, t), crypt.NewSecretStore([]byte("k")), authparams.ServiceCache{})
+	f := newFake()
+	f.add("dataset-cars", map[string]string{repos.KeyKind: "dataset", repos.KeySharedWith: "orbits"})
+	f.add("dataset-draft", map[string]string{repos.KeySharedWith: "orbits"}) // no kaos.kind
+	_, err := svc.CreateUser(ctx, &model.User{Username: "bob@orbits.example", CreatedAt: time.Now()})
+	require.NoError(t, err)
+
+	_, err = repos.ReconcileShares(ctx, f, svc)
+	require.NoError(t, err)
+	require.NoError(t, svc.AddUserToGroup(ctx, "bob@orbits.example", repos.ConsumerGroupPrefix+"orbits"))
+	bob := "bob@orbits.example"
+	require.True(t, can(t, svc, bob, permissions.ReadObjectAction, permissions.ObjectArn("dataset-cars", "x")))
+	require.False(t, can(t, svc, bob, permissions.ReadObjectAction, permissions.ObjectArn("dataset-draft", "x")))
+	require.False(t, can(t, svc, bob, permissions.ListObjectsAction, permissions.RepoArn("dataset-draft")))
+
+	f.md["dataset-draft"][repos.KeyKind] = "dataset"
+	_, err = repos.ReconcileShares(ctx, f, svc)
+	require.NoError(t, err)
+	require.True(t, can(t, svc, bob, permissions.ReadObjectAction, permissions.ObjectArn("dataset-draft", "x")))
+
+	// Only an unlabelled repository shared: no group at all.
+	g := newFake()
+	g.add("dataset-draft", map[string]string{repos.KeySharedWith: "vision"})
+	svc2 := acl.NewAuthService(kvtest.GetStore(ctx, t), crypt.NewSecretStore([]byte("k")), authparams.ServiceCache{})
+	_, err = repos.ReconcileShares(ctx, g, svc2)
+	require.NoError(t, err)
+	_, err = svc2.GetGroup(ctx, repos.ConsumerGroupPrefix+"vision")
+	require.ErrorIs(t, err, auth.ErrNotFound)
+}

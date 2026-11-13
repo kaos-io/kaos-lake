@@ -71,6 +71,9 @@ func ReconcileShares(ctx context.Context, c Catalog, svc AuthService) ([]string,
 		if err != nil {
 			return err
 		}
+		if md[KeyKind] != KindDataset {
+			return nil // not (yet) a dataset: /kaos/v1/shared never lists it, so nothing is granted on it
+		}
 		for _, p := range SharedWith(md[KeySharedWith]) {
 			if projectName.MatchString(p) {
 				shared[p] = append(shared[p], r.Name)
