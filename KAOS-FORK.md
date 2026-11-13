@@ -338,6 +338,22 @@ To release, open a pull request that bumps `kaos/VERSION`.
   reused until half its lifetime, the key re-read on each mint; access keys never leave.
   `GET /kaos/v1/peers` answers the peers file (empty without `kaos.sharing`) to any signed-in
   caller. Code: `pkg/kaos/sharing`, `pkg/kaos/repos/kick.go`.
+- **A shared dataset is read by the reading project's apps, as themselves** (PRD novelcore/kaos#1911 D-44,
+  kaos#2089). Needs `kaos.token_identity`, `kaos.workload_identity` and `kaos.sharing`. An app of the reading
+  project (a declared `kaos-app-<app>` user, signed in with its key or its workload token) calls its own data store at
+  `POST /kaos/v1/shared-credentials` with `{"owner": "<project>"}`. That data store, which holds the project's machine key,
+  asks the owner's `POST /kaos/v1/peer-credentials` with the machine token and `{"project": "<own project>", "app": "<app>"}`
+  and returns the answer: `access_key_id`, `secret_access_key`, `expiration`. The owner gives the app its own user
+  `kaos-peer-<project>.<app>` in the group `kaos-consumer-<project>` and in no other, with no policy of its own, and an
+  exchanged key (`KAOSX…`, lifetime `kaos.workload_identity.key_ttl`). So the app reads exactly what the group does: the
+  datasets whose `kaos.shared_with` names its project, never a write, never another dataset of the owner. Only a caller in
+  that project's consumer group (its machine user) may ask, and only for that project: 401 otherwise, and no user is made.
+  Withdrawing a share changes the group's policy (or removes the group) at once; the declared reconcile deletes a peer user
+  whose group is gone or whose keys have all expired, with its keys. An app that is not a declared app of the reading
+  project, a person, or the admin gets 403 from `/kaos/v1/shared-credentials`; the owner does not check that the app
+  exists, because the owner trusts the project's machine key for what that project reads anyway. The owner's own apps and
+  the declared reconcile's users (`kaos-app-*`) are never touched. Code: `pkg/kaos/sharing/peercreds.go`,
+  `pkg/auth/declared/declared.go` (`reapPeerUsers`), `pkg/kaos/repos/share.go` (`PeerUser`).
 - **"Shared with this project" on the Datasets page** (PRD novelcore/kaos#1283 F-12, release
   `1.86.0-kaos.20`). `GET /kaos/v1/shared-with-us`, behind the API's authentication, answers
   `{"project": <own>, "datasets": [{name: "<owner>/<repo>", owner, repo, location, description,

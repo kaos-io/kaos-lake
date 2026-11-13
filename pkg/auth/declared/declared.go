@@ -180,7 +180,7 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL ti
 			return changes, fmt.Errorf("app user %s: %w", a.User, err)
 		}
 	}
-	users, err := appUsers(ctx, svc)
+	users, err := usersWith(ctx, svc, UserPrefix)
 	if err != nil {
 		return changes, err
 	}
@@ -200,16 +200,56 @@ func Reconcile(ctx context.Context, svc auth.Service, apps []App, exchangeTTL ti
 	if err := removeStaleAppPolicies(ctx, svc, declared, note); err != nil {
 		return changes, err
 	}
+	if err := reapPeerUsers(ctx, svc, exchangeTTL, note); err != nil {
+		return changes, err
+	}
 	return changes, nil
 }
 
-func appUsers(ctx context.Context, svc auth.Service) ([]*model.User, error) {
+// reapPeerUsers deletes the peer users (apps of a reading project, repos.PeerUserPrefix; kaos#2089)
+// that no longer count: one whose project's consumer group is gone, because nothing is shared with
+// the project any more, and one left with no exchanged key younger than exchangeTTL. Their keys
+// go first, as DeleteUser leaves them behind. A peer user's rights are its group's, so deleting it
+// takes nothing that the group still grants from a project that is still shared with.
+func reapPeerUsers(ctx context.Context, svc auth.Service, exchangeTTL time.Duration, note func(string, ...any)) error {
+	users, err := usersWith(ctx, svc, repos.PeerUserPrefix)
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		groups, _, err := svc.ListUserGroups(ctx, u.Username, &model.PaginationParams{Amount: -1})
+		if err != nil {
+			return fmt.Errorf("peer user %s: list groups: %w", u.Username, err)
+		}
+		if err := setCredentials(ctx, svc, u.Username, nil, exchangeTTL, note); err != nil {
+			return fmt.Errorf("peer user %s: %w", u.Username, err)
+		}
+		left, _, err := svc.ListUserCredentials(ctx, u.Username, &model.PaginationParams{Amount: -1})
+		if err != nil {
+			return fmt.Errorf("peer user %s: list credentials: %w", u.Username, err)
+		}
+		if len(groups) > 0 && len(left) > 0 {
+			continue
+		}
+		if err := setCredentials(ctx, svc, u.Username, nil, 0, note); err != nil {
+			return fmt.Errorf("peer user %s: %w", u.Username, err)
+		}
+		if err := svc.DeleteUser(ctx, u.Username); err != nil {
+			return fmt.Errorf("delete peer user %s: %w", u.Username, err)
+		}
+		note("deleted user %s", u.Username)
+	}
+	return nil
+}
+
+// usersWith lists every user whose name starts with prefix.
+func usersWith(ctx context.Context, svc auth.Service, prefix string) ([]*model.User, error) {
 	var all []*model.User
-	params := &model.PaginationParams{Prefix: UserPrefix, Amount: -1}
+	params := &model.PaginationParams{Prefix: prefix, Amount: -1}
 	for {
 		users, page, err := svc.ListUsers(ctx, params)
 		if err != nil {
-			return nil, fmt.Errorf("list app users: %w", err)
+			return nil, fmt.Errorf("list users %s*: %w", prefix, err)
 		}
 		all = append(all, users...)
 		if page == nil || page.NextPageToken == "" {
