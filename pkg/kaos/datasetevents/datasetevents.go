@@ -37,9 +37,9 @@ const (
 	// Template is the ClusterWorkflowTemplate (kubecore-ci-workflows) that fans the event out to
 	// the project's ML apps.
 	Template = "ml-ci-dataset-release"
-	// ServiceAccount is what that Workflow runs as, in the CI namespace (rendered by the
-	// platform with the right to read the apps' reconcilers and start their runs).
-	ServiceAccount = "dataset-release-sa"
+	// The Workflow sets no serviceAccountName: Strict templateReferencing refuses one beside the
+	// ref. The template runs as dataset-release-sa (rendered by the platform with the right to
+	// read the apps' reconcilers and start their runs).
 
 	// debounce is how long a change waits for others: a burst of releases is one Workflow.
 	debounce = 10 * time.Second
@@ -210,7 +210,6 @@ func (s *KubeSubmitter) Workflow() map[string]any {
 			"labels":       map[string]string{"platform.kubecore.io/component": "dataset-release"},
 		},
 		"spec": map[string]any{
-			"serviceAccountName":  ServiceAccount,
 			"workflowTemplateRef": map[string]any{"name": Template, "clusterScope": true},
 			"ttlStrategy":         map[string]any{"secondsAfterCompletion": 3600},
 		},
