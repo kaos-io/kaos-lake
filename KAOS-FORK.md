@@ -501,3 +501,36 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `pkg/graveler/graveler.go` (`CreateRepositoryWithMetadata`, `IsBranchBlocked`,
   `DiscardUncommitted`, `MetadataRepositoryCreator`), `pkg/graveler/ref/manager.go`
   (`CreateRepositoryWithMetadata`).
+
+- **When a produced dataset becomes writable** (PRD novelcore/kaos#1911 CON-02, CON-03). Making a
+  produced dataset usable for its app takes two reconciles that run on their own intervals: the
+  repositories reconcile creates the repository, labels it `kaos.producer=<app>` and protects
+  `main`; the declared-app reconcile gives the app's own policy `KAOSApp-<app>` the right to
+  delete and create `run-*` branches and commit, only once `repos.ProducedBy` holds. Left to their
+  intervals, a run that started right after the repository appeared was refused its first write
+  (`not allowed to fs:DeleteBranch`) for up to a minute. Now:
+  - *The repositories reconcile wakes the other one.* After a pass that created, labelled or
+    protected anything, and on its first pass after a start (`repos.Changed`), the declared-app
+    reconcile (`declared.Run`, `WithWake`) runs at once. It stays the only goroutine that
+    reconciles, so two passes never overlap. While a produced dataset is not ready (the write
+    paths read the protection rules through a cache that lags a few seconds, so `ProducedBy` can
+    say no for a moment) or its grant is not settled, it looks again every 2 s for 3 minutes
+    after the wake-up (`WithRetry`), then goes back to its interval alone.
+  - *The signal.* Once the app's policy holds the allowances for the dataset, and has held them
+    for longer than a session keeps the policies it read (the auth cache's TTL and jitter plus
+    `repos.SettleMargin`, about 33 s by default), the repository gets the label
+    `kaos.grant=<app>@<time>` (`repos.ReconcileGrants`, after each declared-app pass;
+    `declared.GrantedSince` reads the policy's own stored time, so a restarted lake and every
+    replica agree). The label is removed in the pass after the allowance goes: the dataset left
+    the app's declaration, protection came off `main`, the app was renamed (the repository keeps
+    the old app's label and the new app is refused, `ErrNotAdopted`). A dataset declared again
+    starts over. `kaos.grant` is a platform key like `kaos.producer`: the metadata API refuses
+    to set or delete it. **Whatever starts a pipeline run that writes a produced dataset waits for
+    `kaos.grant` on the repository (read it with the repository's metadata); a repository without
+    it is not ready, whatever else it shows.**
+  - *Orderings.* Lake restarted between the two steps: the first pass of the repositories
+    reconcile wakes the other. Two datasets declared at once: each is marked by its own pass.
+    Removal and rename: the label goes with the allowance, within one pass of the declared-app
+    reconcile (that pass still runs at its interval; a removal is not woken).
+  Code: `pkg/auth/declared` (`Run`, `WithWake`, `WithAfterRound`, `WithRetry`, `GrantedSince`),
+  `pkg/kaos/repos` (`kick.go` `Changed`, `grants.go`, `repos.go` `KeyGrant`), `cmd/lakefs/cmd/run.go`.
