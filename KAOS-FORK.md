@@ -325,7 +325,7 @@ To release, open a pull request that bumps `kaos/VERSION`.
   are shared with. Only consumer groups count: a caller without one (this project's own people,
   its pipelines, anyone else) gets 401. A metadata write or delete touching `kaos.shared_with`
   runs the shares reconcile at once (`repos.Kick`). Consumer side: the top-level block
-  `kaos.sharing` (`peers_path`, `machine_key_path`, `interval` default 1m, `cache_ttl` default
+  `kaos.sharing` (`peers_path`, `machine_key_path`, `peer_users_max`, `interval` default 1m, `cache_ttl` default
   60s; unknown sub-keys ignored; no block: off, nothing changes) names the peers file
   `{"project":"B","peers":[{"project":"A","endpoint":"…","url":"…"}]}`, re-read every interval
   (missing: no peers; not JSON: the last good copy stays; invalid entries and the own project
@@ -347,7 +347,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
   `kaos-peer-<project>.<app>` in the group `kaos-consumer-<project>` and in no other, with no policy of its own, and an
   exchanged key (`KAOSX…`, lifetime `kaos.workload_identity.key_ttl`). So the app reads exactly what the group does: the
   datasets whose `kaos.shared_with` names its project, never a write, never another dataset of the owner. Only a caller in
-  that project's consumer group (its machine user) may ask, and only for that project: 401 otherwise, and no user is made.
+  that project's consumer group may ask, and only for that project: 401 otherwise, and no user is made. The caller must
+  also be a user made from an identity-provider token (`tokenid.UserSource`): a peer key, a declared app, the admin or any
+  hand-made user gets 403 even inside the group, so a key cannot renew itself. The code has no claim that tells the
+  project's machine user from its people, so a person of the project is not refused (read access they already hold; bounded
+  by the cap). An app's live key is handed out again to every call until half of its lifetime is spent (parallel steps of one
+  app share it; a user holds at most two live keys); the declared reconcile deletes expired keys of a user that stays.
+  `kaos.sharing.peer_users_max` (default 64) caps the apps of one project that hold a user: 429 with a clear message for a
+  new one, never for one already here. A store error is logged and answered with a fixed sentence.
   Withdrawing a share changes the group's policy (or removes the group) at once; the declared reconcile deletes a peer user
   whose group is gone or whose keys have all expired, with its keys. An app that is not a declared app of the reading
   project, a person, or the admin gets 403 from `/kaos/v1/shared-credentials`; the owner does not check that the app

@@ -72,6 +72,10 @@ func New(cfg config.KAOSTokenIdentity, svc auth.Service) (*Identity, error) {
 	}, nil
 }
 
+// UserSource is the Source of every user this package makes from a token. No other user has it: not an
+// app (kaos-app-*), not a peer (kaos-peer-*), not the admin.
+const UserSource = "zitadel"
+
 // Owns reports whether token claims to come from this issuer. It does not verify anything.
 func (id *Identity) Owns(token string) bool {
 	claims := jwt.MapClaims{}
@@ -200,7 +204,7 @@ func (id *Identity) consumerGroups(claims jwt.MapClaims) []string {
 func (id *Identity) sync(ctx context.Context, username string, groups []string) (*model.User, error) {
 	user, err := id.svc.GetUser(ctx, username)
 	if errors.Is(err, auth.ErrNotFound) {
-		if _, err := id.svc.CreateUser(ctx, &model.User{Username: username, CreatedAt: id.now(), Email: &username, Source: "zitadel"}); err != nil && !errors.Is(err, auth.ErrAlreadyExists) {
+		if _, err := id.svc.CreateUser(ctx, &model.User{Username: username, CreatedAt: id.now(), Email: &username, Source: UserSource}); err != nil && !errors.Is(err, auth.ErrAlreadyExists) {
 			return nil, fmt.Errorf("create user %s: %w", username, err)
 		}
 		user, err = id.svc.GetUser(ctx, username)

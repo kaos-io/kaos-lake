@@ -68,3 +68,21 @@ func TestReconcile_PeerUsers(t *testing.T) {
 	require.NoError(t, err)
 	requireKey(t, svc, yolo)
 }
+
+// An expired key of a user that stays is deleted, its young key is not.
+func TestReconcile_PeerUserLosesOnlyItsExpiredKeys(t *testing.T) {
+	ctx := t.Context()
+	svc := newStore(t)
+	user := peer(t, svc, "vision", "yolo", "KAOSXOLDOLDOLDOLDOL", true)
+	time.Sleep(60 * time.Millisecond)
+	_, err := svc.AddCredentials(ctx, user, "KAOSXYOUNGYOUNGYOUN", "secret")
+	require.NoError(t, err)
+
+	_, err = declared.Reconcile(ctx, svc, nil, 40*time.Millisecond)
+	require.NoError(t, err)
+	requireNoKey(t, svc, "KAOSXOLDOLDOLDOLDOL")
+	_, err = svc.GetCredentials(ctx, "KAOSXYOUNGYOUNGYOUN")
+	require.NoError(t, err)
+	_, err = svc.GetUser(ctx, user)
+	require.NoError(t, err)
+}

@@ -72,7 +72,7 @@ func newWorld(t *testing.T) *world {
 func (w *world) machine(t *testing.T, project string) string {
 	t.Helper()
 	user := "machine@" + project
-	_, err := w.svc.CreateUser(t.Context(), &model.User{Username: user, CreatedAt: time.Now()})
+	_, err := w.svc.CreateUser(t.Context(), &model.User{Username: user, CreatedAt: time.Now(), Source: "zitadel"})
 	require.NoError(t, err)
 	if _, err := w.svc.GetGroup(t.Context(), repos.ConsumerGroupPrefix+project); err == nil {
 		require.NoError(t, w.svc.AddUserToGroup(t.Context(), user, repos.ConsumerGroupPrefix+project))
@@ -93,7 +93,11 @@ func (w *world) exchange(t *testing.T, caller, project, app string) (int, key) {
 	require.NoError(t, err)
 	r := httptest.NewRequest(http.MethodPost, sharing.PeerCredentialsPath, bytes.NewReader(body))
 	if caller != "" {
-		r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: caller}))
+		u, err := w.svc.GetUser(t.Context(), caller) // as the middleware gives it, with its Source
+		if err != nil {
+			u = &model.User{Username: caller}
+		}
+		r = r.WithContext(auth.WithUser(r.Context(), u))
 	}
 	rec := httptest.NewRecorder()
 	w.h.ServeHTTP(rec, r)
@@ -168,12 +172,13 @@ func TestPeerCredentials_ReaderAppReadsOnlyWhatIsShared(t *testing.T) {
 	require.Empty(t, policies, "the user holds no policy of its own")
 }
 
-// A second exchange gives the same user another key; apps of one project are separate users.
+// A second exchange gives the same user the same key (see ReusesTheLiveKey); apps of one project are separate users.
 func TestPeerCredentials_OneUserPerApp(t *testing.T) {
 	w := newWorld(t)
 	_, first := w.exchange(t, "machine@vision", "vision", "yolo")
 	_, second := w.exchange(t, "machine@vision", "vision", "yolo")
-	require.NotEqual(t, first.AccessKeyID, second.AccessKeyID)
+	require.Equal(t, first.AccessKeyID, second.AccessKeyID)
+	require.NotEqual(t, first.AccessKeyID, other0(t, w).AccessKeyID)
 	_, other := w.exchange(t, "machine@vision", "vision", "segment")
 	for _, k := range []key{first, second} {
 		c, err := w.svc.GetCredentials(t.Context(), k.AccessKeyID)
@@ -212,7 +217,7 @@ func TestPeerCredentials_ThirdProjectCannotRead(t *testing.T) {
 	_, err = w.svc.CreateUser(t.Context(), &model.User{Username: "kaos-app-yolo", CreatedAt: time.Now()})
 	require.NoError(t, err)
 	code, _ = w.exchange(t, "kaos-app-yolo", "vision", "yolo")
-	require.Equal(t, http.StatusUnauthorized, code)
+	require.Equal(t, http.StatusForbidden, code)
 	code, _ = w.exchange(t, "", "vision", "yolo")
 	require.Equal(t, http.StatusUnauthorized, code, "not signed in")
 }
@@ -259,7 +264,7 @@ func TestPeerCredentials_WithdrawalRemovesAccess(t *testing.T) {
 // machine2 is a machine user made after its group was (re)created.
 func (w *world) machine2(t *testing.T, user, project string) string {
 	t.Helper()
-	_, err := w.svc.CreateUser(t.Context(), &model.User{Username: user, CreatedAt: time.Now()})
+	_, err := w.svc.CreateUser(t.Context(), &model.User{Username: user, CreatedAt: time.Now(), Source: "zitadel"})
 	require.NoError(t, err)
 	require.NoError(t, w.svc.AddUserToGroup(t.Context(), user, repos.ConsumerGroupPrefix+project))
 	return user
@@ -301,7 +306,7 @@ func TestPeerCredentials_Refuses(t *testing.T) {
 	w := newWorld(t)
 	post := func(body string, h http.Handler) int {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: "machine@vision"}))
+		r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: "machine@vision", Source: "zitadel"}))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
 		return rec.Code
@@ -336,7 +341,7 @@ func TestPeerExchange_EndToEnd(t *testing.T) {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		user := map[string]string{"Bearer tok-vision": "machine@vision", "Bearer tok-cams": "machine@cams"}[seen.auth]
 		if user != "" {
-			r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: user}))
+			r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: user, Source: "zitadel"}))
 		}
 		w.h.ServeHTTP(rw, r)
 	}))
@@ -396,4 +401,143 @@ func TestPeerExchange_EndToEnd(t *testing.T) {
 	owner.Close()
 	code, _ = ask("kaos-app-yolo", "cars")
 	require.Equal(t, http.StatusBadGateway, code)
+}
+
+// Only the reading project's machine identity (a token-identity user, kaos-lake's Source "zitadel") asks
+// for a key. A peer key, a declared app, the admin and a hand-made user are refused even when they are in the
+// project's consumer group: a peer key cannot renew itself, and nobody else makes users here.
+func TestPeerCredentials_OnlyTheMachineIdentityAsks(t *testing.T) {
+	ctx := t.Context()
+	w := newWorld(t)
+	code, _ := w.exchange(t, "machine@vision", "vision", "yolo")
+	require.Equal(t, http.StatusOK, code)
+	for _, caller := range []string{repos.PeerUser("vision", "yolo"), "kaos-app-yolo", "admin", "hand-made@vision"} {
+		if _, err := w.svc.GetUser(ctx, caller); errors.Is(err, auth.ErrNotFound) {
+			_, err = w.svc.CreateUser(ctx, &model.User{Username: caller, CreatedAt: time.Now()})
+			require.NoError(t, err)
+		}
+		if err := w.svc.AddUserToGroup(ctx, caller, repos.ConsumerGroupPrefix+"vision"); !errors.Is(err, auth.ErrAlreadyExists) {
+			require.NoError(t, err)
+		}
+		code, _ = w.exchange(t, caller, "vision", "segment")
+		require.Equal(t, http.StatusForbidden, code, caller)
+	}
+	_, err := w.svc.GetUser(ctx, repos.PeerUser("vision", "segment"))
+	require.ErrorIs(t, err, auth.ErrNotFound, "no user was made for a refused caller")
+	code, _ = w.exchange(t, "machine@vision", "vision", "segment")
+	require.Equal(t, http.StatusOK, code)
+}
+
+func (w *world) keysOf(t *testing.T, user string) []string {
+	t.Helper()
+	creds, _, err := w.svc.ListUserCredentials(t.Context(), user, &model.PaginationParams{Amount: -1})
+	require.NoError(t, err)
+	var ids []string
+	for _, c := range creds {
+		ids = append(ids, c.AccessKeyID)
+	}
+	return ids
+}
+
+// A live key is handed out again, not a new one for each call: parallel steps of one app share it. A key
+// with less than half its lifetime left is not: a new one is made, so every caller gets a key that works for
+// at least half the lifetime. So a user holds at most two live keys.
+func TestPeerCredentials_ReusesTheLiveKey(t *testing.T) {
+	w := newWorld(t)
+	w.h.TTL = 400 * time.Millisecond
+	_, first := w.exchange(t, "machine@vision", "vision", "yolo")
+	user := repos.PeerUser("vision", "yolo")
+	for range 5 {
+		_, again := w.exchange(t, "machine@vision", "vision", "yolo")
+		requireSameKey(t, first, again, "same key, same secret, same expiry")
+	}
+	require.Len(t, w.keysOf(t, user), 1)
+
+	time.Sleep(260 * time.Millisecond) // more than half of the lifetime is spent
+	_, next := w.exchange(t, "machine@vision", "vision", "yolo")
+	require.NotEqual(t, first.AccessKeyID, next.AccessKeyID)
+	require.True(t, next.Expiration.After(first.Expiration))
+	_, same := w.exchange(t, "machine@vision", "vision", "yolo")
+	requireSameKey(t, next, same, "the newer key is the one handed out")
+	require.Len(t, w.keysOf(t, user), 2)
+
+	// Another app, another user, another key.
+	_, other := w.exchange(t, "machine@vision", "vision", "segment")
+	require.NotEqual(t, next.AccessKeyID, other.AccessKeyID)
+}
+
+// A reading project has at most MaxUsers apps here; the apps it has keep working, other projects count apart.
+func TestPeerCredentials_CapsTheUsersOfAProject(t *testing.T) {
+	w := newWorld(t)
+	w.h.MaxUsers = 2
+	for _, app := range []string{"a1", "a2"} {
+		code, _ := w.exchange(t, "machine@vision", "vision", app)
+		require.Equal(t, http.StatusOK, code, app)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"project":"vision","app":"a3"}`))
+	r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: "machine@vision", Source: "zitadel"}))
+	rec := httptest.NewRecorder()
+	w.h.ServeHTTP(rec, r)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Contains(t, rec.Body.String(), "at most 2 apps")
+	_, err := w.svc.GetUser(t.Context(), repos.PeerUser("vision", "a3"))
+	require.ErrorIs(t, err, auth.ErrNotFound)
+	code, _ := w.exchange(t, "machine@vision", "vision", "a1")
+	require.Equal(t, http.StatusOK, code, "an app that is already here still gets its key")
+	code, _ = w.exchange(t, "machine@orbits", "orbits", "a1")
+	require.Equal(t, http.StatusOK, code, "another project counts apart")
+	require.Equal(t, 64, sharing.DefaultPeerUsersMax)
+}
+
+type failingStore struct {
+	sharing.PeerUsers
+}
+
+func (failingStore) AddCredentials(context.Context, string, string, string) (*model.Credential, error) {
+	return nil, errors.New("kv /secret/path/to/store: connection refused")
+}
+
+// A store error is logged, never answered.
+func TestPeerCredentials_DoesNotAnswerStoreErrors(t *testing.T) {
+	w := newWorld(t)
+	h := sharing.PeerCredentialsHandler{Users: failingStore{w.svc}, TTL: time.Hour}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"project":"vision","app":"yolo"}`))
+	r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: "machine@vision", Source: "zitadel"}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.NotContains(t, rec.Body.String(), "secret")
+	require.NotContains(t, rec.Body.String(), "refused")
+	require.Contains(t, rec.Body.String(), "key could not be made")
+}
+
+// The reading side does not answer why its machine token could not be had.
+func TestPeerExchange_DoesNotAnswerMintErrors(t *testing.T) {
+	h := sharing.PeerExchangeHandler{
+		Project: "vision",
+		Peers:   func() []sharing.Peer { return []sharing.Peer{{Project: "cars", Endpoint: "http://127.0.0.1:1"}} },
+		Token: func(context.Context) (string, error) {
+			return "", errors.New("machine key /etc/kaos-lake/machine-key unreadable")
+		},
+		IsApp: func(string) bool { return true },
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"owner":"cars"}`))
+	r = r.WithContext(auth.WithUser(r.Context(), &model.User{Username: "kaos-app-yolo"}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.NotContains(t, rec.Body.String(), "machine-key")
+}
+
+func requireSameKey(t *testing.T, a, b key, msg string) {
+	t.Helper()
+	require.Equal(t, a.AccessKeyID, b.AccessKeyID, msg)
+	require.Equal(t, a.SecretAccessKey, b.SecretAccessKey, msg)
+	require.True(t, a.Expiration.Equal(b.Expiration), msg)
+}
+
+func other0(t *testing.T, w *world) key {
+	t.Helper()
+	_, k := w.exchange(t, "machine@vision", "vision", "other")
+	return k
 }

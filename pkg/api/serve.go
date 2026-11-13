@@ -184,7 +184,7 @@ func Serve(
 	if wl := tokenid.ActiveWorkload(); wl != nil && tokenid.Active() != nil {
 		kaosCfg := cfg.GetBaseConfig().KAOS
 		r.With(sharingMW).Method(http.MethodPost, sharing.PeerCredentialsPath, sharing.PeerCredentialsHandler{
-			Users: authService, TTL: kaosCfg.WorkloadIdentity.KeyTTL,
+			Users: authService, TTL: kaosCfg.WorkloadIdentity.KeyTTL, MaxUsers: kaosCfg.Sharing.PeerUsersMax,
 		})
 		if sh := sharing.Active(); sh != nil {
 			r.With(sharingMW).Method(http.MethodPost, sharing.SharedCredentialsPath, sharing.PeerExchangeHandler{
