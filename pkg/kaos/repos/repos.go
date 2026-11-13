@@ -38,6 +38,12 @@ const (
 	// producerPrefix.
 	KeyProducer    = "kaos.producer"
 	producerPrefix = KeyProducer + "."
+	// KeyGrant says when the app that produces a dataset may write it: "<app>@<time>", the app
+	// whose own policy has held the allowance for the dataset since that time, for longer than the
+	// longest a session keeps the policies it read (ReconcileGrants). Absent until then, and
+	// removed when the allowance goes. Set by the platform only. Whatever starts a pipeline run
+	// that writes the dataset waits for it.
+	KeyGrant = "kaos.grant"
 	// KeyLocation is where the repository's storage lives (D-10); set by the platform only.
 	KeyLocation = "kaos.location"
 	// KeySharedWith lists the projects that may read a dataset, comma-separated (D-09). Only the
@@ -57,7 +63,7 @@ var ErrInvalid = errors.New("invalid repository label")
 var ErrNotAdopted = errors.New("dataset not adopted")
 
 // platformKeys are written by kaos-lake only: which repositories the platform declared.
-var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation, KeyProducer}
+var platformKeys = []string{KeyApp, KeyDefault, KeyOrphaned, KeyLocation, KeyProducer, KeyGrant}
 
 // platformKey reports whether label key k is written by kaos-lake only.
 func platformKey(k string) bool {
@@ -458,6 +464,7 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 			log.WithError(err).Error("Dataset shares not applied")
 		}
 	}
+	first := true
 	for {
 		declared := producers()
 		want := Desired(defaultDataset, outputs(), declared)
@@ -483,6 +490,8 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 		if err != nil {
 			log.WithError(err).Error("Declared repositories not applied")
 		}
+		changed := first || len(changes) > 0
+		first = false
 		// A dataset's main changes only through a merge. Done after labelling, so the label that
 		// the New dataset flow sets last (after its first commit to main) is what starts it.
 		if p, ok := c.(ProtectionCatalog); ok {
@@ -493,6 +502,12 @@ func Run(ctx context.Context, c Catalog, svc AuthService, storageID, storagePref
 			if err != nil {
 				log.WithError(err).Error("Dataset branch protection not applied")
 			}
+			changed = changed || len(changes) > 0
+		}
+		// The produced datasets are in place: whoever grants their apps the right to write them
+		// does not wait for its own interval (Changed).
+		if changed {
+			notifyChanged()
 		}
 		// Nothing stages on a produced dataset's main; what is there blocks every promotion.
 		if h, ok := c.(StrayCatalog); ok {

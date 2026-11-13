@@ -337,7 +337,18 @@ type Option func(*options)
 type options struct {
 	legacyRepository string
 	produced         func(ctx context.Context, dataset, app string) bool
+	wake             <-chan struct{}
+	afterRound       func(ctx context.Context) (waiting bool)
+	retryEvery       time.Duration
+	retryFor         time.Duration
 }
+
+// How soon, and for how long after a wake-up, Run looks again while something it waits on is not
+// there yet: a dataset's main still being protected, or a grant not yet old enough to rely on.
+const (
+	defaultRetryEvery = 2 * time.Second
+	defaultRetryFor   = 3 * time.Minute
+)
 
 // writable returns the datasets a declares that it may write now: those produced reports ready.
 // Without WithProducedDatasets, none.
@@ -361,6 +372,25 @@ func WithProducedDatasets(ready func(ctx context.Context, dataset, app string) b
 	return func(o *options) { o.produced = ready }
 }
 
+// WithWake makes Run reconcile whenever wake signals, not only at its interval, and then look again
+// every few seconds for a few minutes while a produced dataset is not ready for its app: the
+// repositories reconcile (repos.Changed) wakes it as soon as it has made a dataset, so the app is
+// granted the right to write it right then, not up to an interval later (PRD novelcore/kaos#1911
+// CON-02). Only Run reconciles: a wake-up never starts a second, concurrent pass.
+func WithWake(wake <-chan struct{}) Option { return func(o *options) { o.wake = wake } }
+
+// WithAfterRound runs fn after each pass of Run, once the apps' policies are applied. waiting
+// says something is not settled yet (see WithWake). Run's own goroutine calls it, so it never
+// overlaps a pass.
+func WithAfterRound(fn func(ctx context.Context) (waiting bool)) Option {
+	return func(o *options) { o.afterRound = fn }
+}
+
+// WithRetry sets how often and for how long after a wake-up Run looks again while waiting.
+func WithRetry(every, window time.Duration) Option {
+	return func(o *options) { o.retryEvery, o.retryFor = every, window }
+}
+
 // WithLegacyRepository lets every app read and write the named repository too: the project
 // repository that apps created before PRD novelcore/kaos#1283 still write their outputs to.
 // Empty: no such access.
@@ -369,12 +399,18 @@ func WithLegacyRepository(name string) Option { return func(o *options) { o.lega
 // Run loads dir and reconciles now and then every interval until ctx ends, keeping each load in
 // loaded. A failed round is logged and changes nothing more; the next round tries again.
 func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTTL time.Duration, loaded *Loaded, logger logging.Logger, opts ...Option) {
+	o := options{retryEvery: defaultRetryEvery, retryFor: defaultRetryFor}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	log := logger.WithField("service", "kaos_declared_app_users").WithField("path", dir)
-	round := func() {
+	// round reports whether something is not settled: a declared dataset its app may not write
+	// yet, or what afterRound waits on.
+	round := func() (waiting bool) {
 		apps, err := Load(dir)
 		if err != nil {
 			log.WithError(err).Error("Declared app users not applied")
-			return
+			return false
 		}
 		loaded.Set(apps)
 		changes, err := Reconcile(ctx, svc, apps, exchangeTTL, opts...)
@@ -384,16 +420,57 @@ func Run(ctx context.Context, svc auth.Service, dir string, interval, exchangeTT
 		if err != nil {
 			log.WithError(err).Error("Declared app users partly applied")
 		}
+		if o.afterRound != nil {
+			return o.afterRound(ctx)
+		}
+		return false
 	}
 	round()
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	var retry <-chan time.Time
+	var until time.Time
+	look := func(waiting bool) {
+		retry = nil
+		if waiting && time.Now().Before(until) {
+			retry = time.After(o.retryEvery)
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			round()
+			look(round())
+		case <-o.wake:
+			until = time.Now().Add(o.retryFor)
+			look(round())
+		case <-retry:
+			look(round())
 		}
 	}
+}
+
+// GrantedSince reports whether the policy of app (the name of its user without UserPrefix) holds
+// the allowances for producing dataset, and since when: the policy's own stored time, which is
+// when it last changed. ReconcileGrants marks the dataset from it.
+func GrantedSince(ctx context.Context, svc auth.Service, dataset, app string) (time.Time, bool, error) {
+	a := App{User: UserPrefix + app}
+	have, err := svc.GetPolicy(ctx, AppPolicyName(a.User))
+	if errors.Is(err, auth.ErrNotFound) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	base := AppPolicy(a, "", nil).Statement
+	for _, st := range AppPolicy(a, "", []string{dataset}).Statement {
+		if slices.ContainsFunc(base, func(b model.Statement) bool { return sameStatement(st, b) }) {
+			continue
+		}
+		if !slices.ContainsFunc(have.Statement, func(h model.Statement) bool { return sameStatement(st, h) }) {
+			return time.Time{}, false, nil
+		}
+	}
+	return have.CreatedAt, true, nil
 }

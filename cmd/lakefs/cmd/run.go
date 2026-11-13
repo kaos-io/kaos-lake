@@ -164,6 +164,27 @@ var runCmd = &cobra.Command{
 						logger.WithError(err).WithField("dataset", dataset).Warn("Produced dataset not readable: its app only reads it")
 					}
 					return ready
+				}),
+				// The repositories reconcile wakes this one as soon as it has made a dataset, and
+				// the dataset says it is ready for its app only after the grant is in place and old
+				// enough (repos.KeyGrant). PRD novelcore/kaos#1911 CON-02.
+				declared.WithWake(repos.Changed()),
+				declared.WithAfterRound(func(ctx context.Context) bool {
+					c := producedCatalog.Load()
+					if c == nil || baseCfg.KAOS.Repositories.StorageNamespacePrefix == "" {
+						return false
+					}
+					authCache := cfg.AuthConfig().GetBaseAuthConfig().Cache
+					changes, waiting, err := repos.ReconcileGrants(ctx, c, func(ctx context.Context, dataset, app string) (time.Time, bool, error) {
+						return declared.GrantedSince(ctx, authService, dataset, app)
+					}, authCache.TTL+authCache.Jitter+repos.SettleMargin, time.Now())
+					for _, ch := range changes {
+						logger.Info(ch)
+					}
+					if err != nil {
+						logger.WithError(err).Error("Produced dataset grants not recorded")
+					}
+					return waiting || err != nil
 				}))
 		}
 		// Modified by KAOS: identity-provider tokens as bearer tokens (F-03).
