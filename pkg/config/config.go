@@ -689,6 +689,9 @@ type KAOSSharing struct {
 	Interval time.Duration `mapstructure:"interval"`
 	// CacheTTL is how long a peer's answer is reused (zero: 60s).
 	CacheTTL time.Duration `mapstructure:"cache_ttl"`
+	// PeerUsersMax is how many apps of one reading project may hold a key here (zero: 64; PRD
+	// novelcore/kaos#1911 D-44, kaos#2089).
+	PeerUsersMax int `mapstructure:"peer_users_max"`
 	// Unknown collects kaos.sharing.* keys this build does not know, so a newer chart cannot stop
 	// the server from starting.
 	Unknown map[string]any `mapstructure:",remain"`

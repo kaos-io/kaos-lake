@@ -68,6 +68,12 @@ func NewWorkload(cfg config.KAOSWorkloadIdentity, svc auth.Service, apps *declar
 	}, nil
 }
 
+// IsApp reports whether user is a declared app user (kaos-app-{app}), however it signed in.
+func (w *Workload) IsApp(user string) bool {
+	_, ok := w.apps.Get(user)
+	return ok
+}
+
 // Owns reports whether token claims to come from this issuer. It does not verify anything.
 func (w *Workload) Owns(token string) bool {
 	claims := jwt.MapClaims{}

@@ -22,7 +22,15 @@ const (
 	// kaos-consumer-<project>. pkg/auth/tokenid puts that project's people and machine user in it.
 	ConsumerGroupPrefix = "kaos-consumer-"
 	sharePolicyPrefix   = "KAOSShare-"
+	// PeerUserPrefix starts the user an app of a reading project acts as in the owner's data store
+	// (PRD novelcore/kaos#1911 D-44): kaos-peer-<project>.<app>. The user is in the project's
+	// consumer group and nothing else, so it reads exactly what is shared with the project.
+	PeerUserPrefix = "kaos-peer-"
 )
+
+// PeerUser is the name of the user app of project acts as in the data store of a project that
+// shares datasets with project. A project name never contains ".", so the name is unambiguous.
+func PeerUser(project, app string) string { return PeerUserPrefix + project + "." + app }
 
 // readActions are all a consuming project may do with a shared dataset (D-09 invariant).
 var readActions = []string{"fs:Read*", "fs:List*"}
@@ -62,6 +70,9 @@ func ReconcileShares(ctx context.Context, c Catalog, svc AuthService) ([]string,
 		md, err := c.GetRepositoryMetadata(ctx, r.Name)
 		if err != nil {
 			return err
+		}
+		if md[KeyKind] != KindDataset {
+			return nil // not (yet) a dataset: /kaos/v1/shared never lists it, so nothing is granted on it
 		}
 		for _, p := range SharedWith(md[KeySharedWith]) {
 			if projectName.MatchString(p) {

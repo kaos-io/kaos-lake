@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,4 +141,29 @@ func TestKaosSharedWithUs(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, code)
 	code, _ = get(func(r *http.Request) { r.SetBasicAuth(cred.AccessKeyID, "wrong") })
 	require.Equal(t, http.StatusUnauthorized, code)
+}
+
+// Without workload identity and token identity the key endpoints between projects (PRD novelcore/kaos#1911
+// D-44, kaos#2089) are not served: no key comes back, to an admin either. (The route being served with
+// the flags on needs a configured identity provider, which this harness does not have; pkg/kaos/sharing
+// tests the handlers.)
+func TestKaosPeerCredentialsAreOffWithoutIdentity(t *testing.T) {
+	handler, _ := setupHandler(t)
+	server := setupServer(t, handler)
+	cred := createDefaultAdminUser(t, setupClientByEndpoint(t, server.URL, "", ""))
+	for path, body := range map[string]string{
+		"/kaos/v1/peer-credentials":   `{"project":"vision","app":"yolo"}`,
+		"/kaos/v1/shared-credentials": `{"owner":"cars"}`,
+	} {
+		r, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+path, strings.NewReader(body))
+		require.NoError(t, err)
+		r.SetBasicAuth(cred.AccessKeyID, cred.SecretAccessKey)
+		resp, err := http.DefaultClient.Do(r)
+		require.NoError(t, err)
+		raw, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), "access_key_id", path)
+		require.NotContains(t, string(raw), "secret_access_key", path)
+	}
 }

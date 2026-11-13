@@ -176,6 +176,26 @@ func Serve(
 			Catalog: catalog, Groups: authService, Owner: cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
 		})
 	}
+	// Modified by KAOS: an app reads a dataset another project shares with its own project as
+	// itself, not with the project's key (pkg/kaos/sharing, PRD novelcore/kaos#1911 D-44, kaos#2089).
+	// Owner side: a reading project's machine user asks for a key of one of its apps. Reading
+	// side: a declared app asks this data store, which asks the owner's. Both need workload
+	// identity, which gives exchanged keys their lifetime.
+	if wl := tokenid.ActiveWorkload(); wl != nil && tokenid.Active() != nil {
+		kaosCfg := cfg.GetBaseConfig().KAOS
+		r.With(sharingMW).Method(http.MethodPost, sharing.PeerCredentialsPath, sharing.PeerCredentialsHandler{
+			Users: authService, TTL: kaosCfg.WorkloadIdentity.KeyTTL, MaxUsers: kaosCfg.Sharing.PeerUsersMax,
+		})
+		if sh := sharing.Active(); sh != nil {
+			r.With(sharingMW).Method(http.MethodPost, sharing.SharedCredentialsPath, sharing.PeerExchangeHandler{
+				Project: kaosCfg.TokenIdentity.Project,
+				Peers:   func() []sharing.Peer { return sh.Peers.Get().Peers },
+				Token:   sh.Aggregator.Token,
+				IsApp:   wl.IsApp,
+				Client:  &http.Client{},
+			})
+		}
+	}
 	// Modified by KAOS: dataset layouts for the UI and the CLI (pkg/kaos/templates, PRD
 	// novelcore/kaos#1283 F-04/F-05): the built-in ones and the project's own (main of its
 	// "layouts" repository), to signed-in callers. They render files, which the caller commits as
