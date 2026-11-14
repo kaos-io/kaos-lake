@@ -124,6 +124,14 @@ To release, open a pull request that bumps `kaos/VERSION`.
   description, location, main's head, and versions: `vN` newest first, then every other tag by name
   as a named version, never the `k-*` tags of kept runs, PRD novelcore/kaos#1911 D-03) to pods of those namespaces by
   their service-account token, any account, acting as no user. It never serves data.
+  The project's own datasets are listed once per 5 s (PRD novelcore/kaos#1911 AC-24, `datacatalog.Cache`):
+  concurrent reads share one pass over the data store (single flight, run under its own 2 min bound,
+  so one reader leaving fails no other), up to 8 datasets are read in parallel, a failed pass is never
+  kept, and a pass starts only when the kept listing has expired, so a reader never sees a version
+  go back. The answer does not depend on the caller beyond the token check (done on every request,
+  before the cache), so one key serves all. A released version, a new commit on a dataset's main
+  and a changed label show within 5 s (no in-process signal covers commits, and other replicas get none);
+  the peers' datasets are not in this cache, they have the aggregator's own.
 - **Dataset release event** (PRD novelcore/kaos#1283 D-05). With `kaos.dataset_events.namespace` set
   (the project's CI namespace), a created or deleted version tag on a `dataset-*` repository (`vN`, or
   any other name since PRD novelcore/kaos#1911 D-03; never a kept run's `k-*`), a repository

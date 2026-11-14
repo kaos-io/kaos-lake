@@ -130,7 +130,8 @@ func Serve(
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
 		if ns := cfg.GetBaseConfig().KAOS.Catalog.Namespaces; len(ns) > 0 {
-			h := datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns}
+			h := datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns,
+				Cache: datacatalog.NewCache(datacatalog.CacheTTL)}
 			// Modified by KAOS: with kaos.sharing, the datasets sibling projects share with this
 			// one follow its own (pkg/kaos/sharing, PRD novelcore/kaos#1283 F-12).
 			if sh := sharing.Active(); sh != nil {

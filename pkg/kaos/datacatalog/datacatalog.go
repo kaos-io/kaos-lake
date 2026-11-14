@@ -18,6 +18,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/graveler"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
+	"golang.org/x/sync/errgroup"
 )
 
 // Catalog is what the handler reads of the lakeFS catalog.
@@ -67,38 +68,61 @@ func SharedWith(ctx context.Context, c Catalog, projects []string) ([]Dataset, e
 	return out, err
 }
 
-// list returns the datasets whose metadata keep accepts.
+// listParallel bounds the per-dataset reads (metadata, tags, branch head) in flight at once.
+const listParallel = 8
+
+// list returns the datasets whose metadata keep accepts, in the catalog's order.
 func list(ctx context.Context, c Catalog, keep func(graveler.RepositoryMetadata) bool) ([]Dataset, error) {
-	var out []Dataset
+	var all []*catalog.Repository
 	after := ""
 	for {
 		page, more, err := c.ListRepositories(ctx, 100, repos.DatasetPrefix, "", after)
 		if err != nil {
 			return nil, err
 		}
-		for _, r := range page {
-			after = r.Name
-			md, err := c.GetRepositoryMetadata(ctx, r.Name)
-			if err != nil {
-				return nil, err
-			}
-			if md[repos.KeyKind] != repos.KindDataset || !keep(md) {
-				continue
-			}
-			d := Dataset{Name: r.Name, Default: md[repos.KeyDefault] == "true",
-				Description: md[repos.KeyDescription], Location: md[repos.KeyLocation], Template: md[repos.KeyTemplate]}
-			if d.Versions, err = versions(ctx, c, r.Name); err != nil {
-				return nil, err
-			}
-			if head, err := c.GetBranchReference(ctx, r.Name, r.DefaultBranch); err == nil {
-				d.Latest = head
-			}
-			out = append(out, d)
+		if len(page) > 0 {
+			after = page[len(page)-1].Name
 		}
+		all = append(all, page...)
 		if !more || len(page) == 0 {
-			return out, nil
+			break
 		}
 	}
+	// One slot per repository, so the order does not depend on which read finishes first.
+	found := make([]*Dataset, len(all))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(listParallel)
+	for i, r := range all {
+		g.Go(func() error {
+			md, err := c.GetRepositoryMetadata(gctx, r.Name)
+			if err != nil {
+				return err
+			}
+			if md[repos.KeyKind] != repos.KindDataset || !keep(md) {
+				return nil
+			}
+			d := &Dataset{Name: r.Name, Default: md[repos.KeyDefault] == "true",
+				Description: md[repos.KeyDescription], Location: md[repos.KeyLocation], Template: md[repos.KeyTemplate]}
+			if d.Versions, err = versions(gctx, c, r.Name); err != nil {
+				return err
+			}
+			if head, err := c.GetBranchReference(gctx, r.Name, r.DefaultBranch); err == nil {
+				d.Latest = head
+			}
+			found[i] = d
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	var out []Dataset
+	for _, d := range found {
+		if d != nil {
+			out = append(out, *d)
+		}
+	}
+	return out, nil
 }
 
 // versions lists repo's vN tags, newest first, then every other tag by name, as named versions.
@@ -139,6 +163,9 @@ type Handler struct {
 	// <owner>/<dataset>, to list after the project's own (pkg/kaos/sharing). It never fails: a
 	// peer that cannot be read is left out.
 	Shared func(ctx context.Context) []Dataset
+	// Cache, when set, shares the project's own datasets between concurrent and near-in-time
+	// reads; nil reads the catalog on every request.
+	Cache *Cache
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -151,11 +178,15 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "token not accepted for the catalog"})
 		return
 	}
-	datasets, err := List(r.Context(), h.Catalog)
+	// The answer depends on nothing about the caller beyond having passed Verify, so every
+	// accepted caller of this handler shares one cached listing. The peers' datasets are read
+	// after it, from the aggregator's own cache.
+	own, err := h.Cache.List(r.Context(), h.Catalog)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
 		return
 	}
+	datasets := slices.Clone(own) // own is shared with other readers: never append into it
 	if h.Shared != nil {
 		datasets = append(datasets, h.Shared(r.Context())...)
 	}
