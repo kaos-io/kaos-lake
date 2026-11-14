@@ -341,7 +341,7 @@ To release, open a pull request that bumps `kaos/VERSION`.
 - **A shared dataset is read by the reading project's apps, as themselves** (PRD novelcore/kaos#1911 D-44,
   kaos#2089). Needs `kaos.token_identity`, `kaos.workload_identity` and `kaos.sharing`. An app of the reading
   project (a declared `kaos-app-<app>` user, signed in with its key or its workload token) calls its own data store at
-  `POST /kaos/v1/shared-credentials` with `{"owner": "<project>"}`. That data store, which holds the project's machine key,
+  `POST /kaos/v1/shared-credentials` (kaos.36) with `{"owner": "<project>"}`. That data store, which holds the project's machine key,
   asks the owner's `POST /kaos/v1/peer-credentials` with the machine token and `{"project": "<own project>", "app": "<app>"}`
   and returns the answer: `access_key_id`, `secret_access_key`, `expiration`. The owner gives the app its own user
   `kaos-peer-<project>.<app>` in the group `kaos-consumer-<project>` and in no other, with no policy of its own, and an
