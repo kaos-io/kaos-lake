@@ -639,6 +639,12 @@ type BaseConfig struct {
 			// apps' pipelines is created.
 			Namespace string `mapstructure:"namespace"`
 		} `mapstructure:"dataset_events"`
+		// KaosLib holds the kaos-lib release record the operator publishes (kaos.kaos_lib.support,
+		// PRD novelcore/kaos#2017 F-55). Support is opaque JSON that /kaos/v1/ui serves as
+		// kaos_lib_support; absent: nothing is served.
+		KaosLib struct {
+			Support map[string]any `mapstructure:"support"`
+		} `mapstructure:"kaos_lib"`
 		// Unknown collects kaos.* keys this build does not know. Config is decoded exactly (an
 		// unknown key is an error), but a newer chart or operator may set a kaos.* key an older
 		// image lacks; that must never stop the server from starting.

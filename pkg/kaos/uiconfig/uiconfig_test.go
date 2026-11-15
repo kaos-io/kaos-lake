@@ -59,3 +59,28 @@ func TestHandlerProject(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	require.Equal(t, "greenland", got["project"])
 }
+
+// The kaos-lib release record is served unchanged, new fields included (PRD novelcore/kaos#2017
+// F-55); without one the field is absent.
+func TestHandlerKaosLibSupport(t *testing.T) {
+	serve := func(h uiconfig.Handler) string {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kaos/v1/ui", nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		return rec.Body.String()
+	}
+	var support map[string]any
+	require.NoError(t, json.Unmarshal([]byte(`{"version":"0.4.0","supported":">=0.3","breaking":true,
+		"deprecated":[{"range":"<0.3","unsupported_after":"2026-12-31"}],
+		"addresses":{"releases_base":"https://r","index_url":"https://i","docs_base":"https://d","docs_current":"https://dc"},
+		"recommended":"0.4.0","a_future_field":{"x":[1,2]}}`), &support))
+	body := serve(uiconfig.Handler{KaosLibSupport: support})
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Equal(t, support, got["kaos_lib_support"])
+	require.Equal(t, "", got["console_url"], "the other fields are unchanged")
+
+	for _, h := range []uiconfig.Handler{{}, {KaosLibSupport: map[string]any{}}} {
+		require.NotContains(t, serve(h), "kaos_lib_support")
+	}
+}
