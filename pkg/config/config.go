@@ -641,7 +641,8 @@ type BaseConfig struct {
 		} `mapstructure:"dataset_events"`
 		// KaosLib holds the kaos-lib release record the operator publishes (kaos.kaos_lib.support,
 		// PRD novelcore/kaos#2017 F-55). Support is opaque JSON that /kaos/v1/ui serves as
-		// kaos_lib_support; absent: nothing is served.
+		// kaos_lib_support; absent: nothing is served. The support keys must be lowercase and contain
+		// no dots, because viper lowercases and splits keys; the operator's Release struct keeps them so.
 		KaosLib struct {
 			Support map[string]any `mapstructure:"support"`
 		} `mapstructure:"kaos_lib"`
