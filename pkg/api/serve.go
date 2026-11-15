@@ -214,6 +214,7 @@ func Serve(
 		LegacyRepository: cfg.GetBaseConfig().KAOS.Repositories.LegacyRepository,
 		Meluxina:         meluxinaServed,
 		Project:          cfg.GetBaseConfig().KAOS.TokenIdentity.Project,
+		KaosLibSupport:   cfg.GetBaseConfig().KAOS.KaosLib.Support,
 	})
 	r.With(sharingMW).Get("/kaos/v1/dataset-templates", th.List)
 	r.With(sharingMW).Post("/kaos/v1/dataset-templates/{name}/render", th.Render)

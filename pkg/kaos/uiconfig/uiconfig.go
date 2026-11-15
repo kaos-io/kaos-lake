@@ -12,7 +12,7 @@ import (
 )
 
 // Handler answers GET /kaos/v1/ui with {"console_url": "...", "mlflow_url": "...",
-// "legacy_repository": "...", "meluxina": bool}. None is a secret, so the answer needs no sign-in
+// "legacy_repository": "...", "meluxina": bool, "project": "...", "kaos_lib_support": {...}}. None is a secret, so the answer needs no sign-in
 // (the header shows before sign-in too). Meluxina says whether this lakeFS serves the MeluXina view
 // (/kaos/v1/meluxina), so the UI shows its tab only then.
 type Handler struct {
@@ -23,6 +23,11 @@ type Handler struct {
 	// Project is this lakeFS's own project (kaos.token_identity.project), so links back to the
 	// console open its pages for this project.
 	Project string
+	// KaosLibSupport is the newest kaos-lib release record (kaos.kaos_lib.support, PRD
+	// novelcore/kaos#2017 F-55), served unchanged as kaos_lib_support: the CLI caches the
+	// platform's addresses and recommendation from it at login. Opaque on purpose, so a field a
+	// newer operator adds passes through. Empty: the field is omitted.
+	KaosLibSupport map[string]any
 }
 
 // Valid reports whether u is empty (no link) or an absolute http(s) URL.
@@ -42,11 +47,15 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 		return u
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	out := map[string]any{
 		"console_url":       link(h.ConsoleURL),
 		"mlflow_url":        link(h.MLflowURL),
 		"legacy_repository": h.LegacyRepository,
 		"meluxina":          h.Meluxina,
 		"project":           h.Project,
-	})
+	}
+	if len(h.KaosLibSupport) > 0 {
+		out["kaos_lib_support"] = h.KaosLibSupport
+	}
+	_ = json.NewEncoder(w).Encode(out)
 }

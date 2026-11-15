@@ -84,3 +84,26 @@ func TestKaosDatasetEvents(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "vision-ci", baseCfg.KAOS.DatasetEvents.Namespace)
 }
+
+// kaos.kaos_lib.support (PRD novelcore/kaos#2017 F-55) is read as opaque data, nested fields
+// included; absent, it is empty and not collected as unknown.
+func TestKaosLibSupport(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	require.Empty(t, baseCfg.KAOS.KaosLib.Support)
+
+	viper.Set("kaos.kaos_lib.support", map[string]any{
+		"version":        "0.4.0",
+		"addresses":      map[string]any{"index_url": "https://i"},
+		"a_future_field": []any{"x"},
+	})
+	baseCfg, err = config.NewConfig("", &config.ConfigImpl{})
+	require.NoError(t, err)
+	s := baseCfg.KAOS.KaosLib.Support
+	require.Equal(t, "0.4.0", s["version"])
+	require.Equal(t, map[string]any{"index_url": "https://i"}, s["addresses"])
+	require.Equal(t, []any{"x"}, s["a_future_field"])
+	require.NotContains(t, baseCfg.KAOS.Unknown, "kaos_lib")
+}
