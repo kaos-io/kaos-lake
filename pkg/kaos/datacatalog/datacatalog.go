@@ -10,6 +10,7 @@ package datacatalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/graveler"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
+	"github.com/treeverse/lakefs/pkg/logging"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -159,6 +161,11 @@ type Handler struct {
 	Catalog    Catalog
 	Verify     func(ctx context.Context, token string, namespaces []string) (string, error)
 	Namespaces []string
+	// VerifyWorkload, when set with Workloads, also admits those single service accounts by a
+	// token bound to this project's audience; it is tried after Verify.
+	VerifyWorkload func(ctx context.Context, token string, workloads []string, project string) (string, error)
+	Workloads      []string
+	Project        string
 	// Shared, when set, returns the datasets sibling projects share with this one, named
 	// <owner>/<dataset>, to list after the project's own (pkg/kaos/sharing). It never fails: a
 	// peer that cannot be read is left out.
@@ -174,7 +181,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "a service-account token is required as bearer"})
 		return
 	}
-	if _, err := h.Verify(r.Context(), token, h.Namespaces); err != nil {
+	if err := h.authorize(r.Context(), token); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "token not accepted for the catalog"})
 		return
 	}
@@ -191,6 +198,35 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		datasets = append(datasets, h.Shared(r.Context())...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"datasets": datasets})
+}
+
+// Served reports whether GET /kaos/v1/catalog is registered: when any namespace or workload may
+// read it.
+func Served(namespaces, workloads []string) bool {
+	return len(namespaces) > 0 || len(workloads) > 0
+}
+
+// authorize admits a token of a namespace, else of a listed workload. A refusal is logged at Debug
+// (it happens per request) with every error, which names the namespace and service account, never
+// the token.
+func (h Handler) authorize(ctx context.Context, token string) error {
+	var nsErr, wlErr error
+	if len(h.Namespaces) > 0 && h.Verify != nil {
+		if _, nsErr = h.Verify(ctx, token, h.Namespaces); nsErr == nil {
+			return nil
+		}
+	}
+	if len(h.Workloads) > 0 && h.VerifyWorkload != nil {
+		if _, wlErr = h.VerifyWorkload(ctx, token, h.Workloads, h.Project); wlErr == nil {
+			return nil
+		}
+	}
+	err := errors.Join(nsErr, wlErr)
+	if err == nil {
+		err = errors.New("no verifier")
+	}
+	logging.FromContext(ctx).WithError(err).Debug("Catalog token refused")
+	return err
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

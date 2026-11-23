@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -587,6 +588,14 @@ type BaseConfig struct {
 		// WorkloadIdentity. Empty: off.
 		Catalog struct {
 			Namespaces []string `mapstructure:"namespaces"`
+			// Workloads are single service accounts, each "<namespace>/<serviceaccount>", that
+			// may read the catalog with a token whose audience is exactly
+			// <workload_identity.audience>:<Project> (the pool's read API). The token is
+			// accepted for the catalog only.
+			Workloads []string `mapstructure:"workloads"`
+			// Project is this lake's project name, which binds the audience of Workloads
+			// tokens. Empty: kaos.token_identity.project. Required with Workloads.
+			Project string `mapstructure:"project"`
 		} `mapstructure:"catalog"`
 		Repositories struct {
 			StorageNamespacePrefix string `mapstructure:"storage_namespace_prefix"`
@@ -822,6 +831,9 @@ func (c *BaseConfig) Validate() error {
 	} else if r.RetentionInterval < 5*time.Minute {
 		return fmt.Errorf("%w: kaos.repositories.retention_interval is %s, at least 5m is required", ErrBadConfiguration, r.RetentionInterval)
 	}
+	if err := validateCatalog(c.KAOS.Catalog.Workloads, c.KAOS.Catalog.Project, c.KAOS.TokenIdentity.Project); err != nil {
+		return err
+	}
 	return ValidateBlockstore(&c.Blockstore)
 }
 
@@ -994,5 +1006,39 @@ func BuildCodeSnippets(s []UISnippet) []apiparams.CodeSnippet {
 }
 
 func (u *UI) GetCustomViewers() []apiparams.CustomViewer {
+	return nil
+}
+
+var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+// CatalogProject returns the project that binds the audience of catalog workload tokens.
+func CatalogProject(catalogProject, tokenIdentityProject string) string {
+	if catalogProject != "" {
+		return catalogProject
+	}
+	return tokenIdentityProject
+}
+
+// ParseCatalogWorkload splits "<namespace>/<serviceaccount>", both DNS-1123 labels.
+func ParseCatalogWorkload(entry string) (ns, sa string, err error) {
+	parts := strings.Split(entry, "/")
+	if len(parts) != 2 || len(parts[0]) > 63 || len(parts[1]) > 63 || !dns1123Label.MatchString(parts[0]) || !dns1123Label.MatchString(parts[1]) {
+		return "", "", fmt.Errorf("%w: kaos.catalog.workloads entry %q must be <namespace>/<serviceaccount>, both DNS-1123 labels", ErrBadConfiguration, entry)
+	}
+	return parts[0], parts[1], nil
+}
+
+func validateCatalog(workloads []string, project, tokenIdentityProject string) error {
+	for _, w := range workloads {
+		if _, _, err := ParseCatalogWorkload(w); err != nil {
+			return err
+		}
+	}
+	if len(workloads) > 0 && CatalogProject(project, tokenIdentityProject) == "" {
+		return fmt.Errorf("%w: kaos.catalog.project (or kaos.token_identity.project) is required with kaos.catalog.workloads", ErrBadConfiguration)
+	}
+	if p := CatalogProject(project, tokenIdentityProject); len(workloads) > 0 && (len(p) > 63 || !dns1123Label.MatchString(p)) {
+		return fmt.Errorf("%w: kaos.catalog.project %q must be a DNS-1123 label", ErrBadConfiguration, p)
+	}
 	return nil
 }

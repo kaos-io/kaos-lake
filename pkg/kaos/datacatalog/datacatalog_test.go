@@ -123,3 +123,42 @@ func TestDataset_OwnerOmitted(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"name":"cars/dataset-roads","owner":"cars","versions":[]}`, string(raw))
 }
+
+// PRD novelcore/kaos#1533: a listed workload with a project-bound token reads the catalog next to
+// the namespace path; neither admits what the other refuses.
+func TestHandler_Workloads(t *testing.T) {
+	h := datacatalog.Handler{Catalog: fake{}, Namespaces: []string{"vision-ci"},
+		Verify: func(_ context.Context, token string, _ []string) (string, error) {
+			if token == "ci-token" {
+				return "vision-ci", nil
+			}
+			return "", errors.New("denied")
+		},
+		Workloads: []string{"kaos-system/osr-read-api"}, Project: "e2e-hpc-lab",
+		VerifyWorkload: func(_ context.Context, token string, wls []string, project string) (string, error) {
+			if token == "bound-token" && wls[0] == "kaos-system/osr-read-api" && project == "e2e-hpc-lab" {
+				return wls[0], nil
+			}
+			return "", errors.New("denied")
+		}}
+	code := func(auth string) int {
+		r := httptest.NewRequest(http.MethodGet, "/kaos/v1/catalog", nil)
+		r.Header.Set("Authorization", auth)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusOK, code("Bearer bound-token"))
+	require.Equal(t, http.StatusOK, code("Bearer ci-token"))
+	require.Equal(t, http.StatusUnauthorized, code("Bearer plain-token"))
+	h.Namespaces = nil // workloads only: the namespace verifier is never consulted
+	require.Equal(t, http.StatusUnauthorized, code("Bearer ci-token"))
+	require.Equal(t, http.StatusOK, code("Bearer bound-token"))
+}
+
+// The route is registered when only workloads are set, and not when neither is.
+func TestServed(t *testing.T) {
+	require.True(t, datacatalog.Served(nil, []string{"kaos-system/osr-read-api"}))
+	require.True(t, datacatalog.Served([]string{"vision-ci"}, nil))
+	require.False(t, datacatalog.Served(nil, nil))
+}
