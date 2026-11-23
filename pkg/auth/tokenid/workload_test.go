@@ -202,3 +202,43 @@ func TestWorkload_Namespace(t *testing.T) {
 	_, err = w.Namespace(t.Context(), "not-a-token", ns)
 	require.ErrorIs(t, err, ErrDenied)
 }
+
+// PRD novelcore/kaos#1533 (kaos-app issue 429): one extra workload reads the catalog with a token
+// bound to this project's audience, and nowhere else.
+func TestWorkload_CatalogWorkload(t *testing.T) {
+	is := newIssuer(t)
+	w, _ := newWorkload(t, is)
+	wls := []string{"kaos-system/osr-read-api"}
+	bound := func(ns, sa, project string) string {
+		return podToken(t, is, ns, sa, func(c jwt.MapClaims) { c["aud"] = []string{workloadAudience + ":" + project} })
+	}
+	got, err := w.CatalogWorkload(t.Context(), bound("kaos-system", "osr-read-api", "e2e-hpc-lab"), wls, "e2e-hpc-lab")
+	require.NoError(t, err)
+	require.Equal(t, "kaos-system/osr-read-api", got)
+
+	// plain pool-wide audience: refused
+	_, err = w.CatalogWorkload(t.Context(), podToken(t, is, "kaos-system", "osr-read-api", nil), wls, "e2e-hpc-lab")
+	require.ErrorIs(t, err, ErrDenied)
+	// another project's audience: refused
+	_, err = w.CatalogWorkload(t.Context(), bound("kaos-system", "osr-read-api", "other-project"), wls, "e2e-hpc-lab")
+	require.ErrorIs(t, err, ErrDenied)
+	// another service account of the same namespace: refused
+	_, err = w.CatalogWorkload(t.Context(), bound("kaos-system", "default", "e2e-hpc-lab"), wls, "e2e-hpc-lab")
+	require.ErrorIs(t, err, ErrDenied)
+	// same name, another namespace: refused
+	_, err = w.CatalogWorkload(t.Context(), bound("other", "osr-read-api", "e2e-hpc-lab"), wls, "e2e-hpc-lab")
+	require.ErrorIs(t, err, ErrDenied)
+	// no project configured: refused
+	_, err = w.CatalogWorkload(t.Context(), bound("kaos-system", "osr-read-api", ""), wls, "")
+	require.ErrorIs(t, err, ErrDenied)
+
+	// Every other route verifies the pool-wide audience: the bound token is refused there, even
+	// from a declared app's own workflow account and from a namespace of kaos.catalog/meluxina.
+	tok := bound("vision-ml", "yolo-workflow", "e2e-hpc-lab")
+	_, err = w.Resolve(t.Context(), tok)
+	require.ErrorIs(t, err, ErrDenied)
+	_, err = w.Namespace(t.Context(), bound("kaos-system", "osr-read-api", "e2e-hpc-lab"), []string{"kaos-system"})
+	require.ErrorIs(t, err, ErrDenied)
+	_, err = w.Namespace(t.Context(), tok, []string{"vision-ml"})
+	require.ErrorIs(t, err, ErrDenied)
+}

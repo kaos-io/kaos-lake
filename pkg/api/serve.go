@@ -129,9 +129,16 @@ func Serve(
 	meluxinaServed := false
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
-		if ns := cfg.GetBaseConfig().KAOS.Catalog.Namespaces; len(ns) > 0 {
+		cat := cfg.GetBaseConfig().KAOS.Catalog
+		if ns := cat.Namespaces; len(ns) > 0 || len(cat.Workloads) > 0 {
 			h := datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns,
 				Cache: datacatalog.NewCache(datacatalog.CacheTTL)}
+			// Modified by KAOS: the pool's read API, one service account bound to this project's
+			// audience, reads the catalog and nothing else (PRD novelcore/kaos#1533).
+			if len(cat.Workloads) > 0 {
+				h.VerifyWorkload, h.Workloads = wl.CatalogWorkload, cat.Workloads
+				h.Project = config.CatalogProject(cat.Project, cfg.GetBaseConfig().KAOS.TokenIdentity.Project)
+			}
 			// Modified by KAOS: with kaos.sharing, the datasets sibling projects share with this
 			// one follow its own (pkg/kaos/sharing, PRD novelcore/kaos#1283 F-12).
 			if sh := sharing.Active(); sh != nil {

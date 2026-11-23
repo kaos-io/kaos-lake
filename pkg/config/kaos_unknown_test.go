@@ -107,3 +107,32 @@ func TestKaosLibSupport(t *testing.T) {
 	require.Equal(t, []any{"x"}, s["a_future_field"])
 	require.NotContains(t, baseCfg.KAOS.Unknown, "kaos_lib")
 }
+
+// PRD novelcore/kaos#1533: kaos.catalog.workloads entries are <namespace>/<serviceaccount>, and
+// need a project; a bad entry stops the server from starting.
+func TestKaosCatalogWorkloads(t *testing.T) {
+	load := func(workloads []string, project, idProject string) error {
+		viper.Reset()
+		t.Cleanup(viper.Reset)
+		viper.Set("database.type", "local")
+		viper.Set("database.local.path", t.TempDir())
+		viper.Set("auth.encrypt.secret_key", "k")
+		viper.Set("blockstore.type", "local")
+		viper.Set("kaos.catalog.workloads", workloads)
+		viper.Set("kaos.catalog.project", project)
+		viper.Set("kaos.token_identity.project", idProject)
+		baseCfg, err := config.NewConfig("", &config.ConfigImpl{})
+		if err != nil {
+			return err
+		}
+		return baseCfg.Validate()
+	}
+	require.NoError(t, load([]string{"kaos-system/osr-read-api"}, "e2e-hpc-lab", ""))
+	require.NoError(t, load([]string{"kaos-system/osr-read-api"}, "", "e2e-hpc-lab"), "falls back to token_identity.project")
+	require.NoError(t, load(nil, "", ""))
+	for _, bad := range []string{"osr-read-api", "a/b/c", "/sa", "ns/", "Kaos/sa", "ns/sa_x", "ns/-sa", ""} {
+		require.ErrorIs(t, load([]string{bad}, "p", ""), config.ErrBadConfiguration, bad)
+	}
+	require.ErrorIs(t, load([]string{"ns/sa"}, "", ""), config.ErrBadConfiguration)
+	require.ErrorIs(t, load([]string{"ns/sa"}, "Bad_Project", ""), config.ErrBadConfiguration)
+}

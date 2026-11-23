@@ -10,6 +10,7 @@ package datacatalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/treeverse/lakefs/pkg/catalog"
 	"github.com/treeverse/lakefs/pkg/graveler"
 	"github.com/treeverse/lakefs/pkg/kaos/repos"
+	"github.com/treeverse/lakefs/pkg/logging"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -159,6 +161,11 @@ type Handler struct {
 	Catalog    Catalog
 	Verify     func(ctx context.Context, token string, namespaces []string) (string, error)
 	Namespaces []string
+	// VerifyWorkload, when set with Workloads, also admits those single service accounts by a
+	// token bound to this project's audience; it is tried after Verify.
+	VerifyWorkload func(ctx context.Context, token string, workloads []string, project string) (string, error)
+	Workloads      []string
+	Project        string
 	// Shared, when set, returns the datasets sibling projects share with this one, named
 	// <owner>/<dataset>, to list after the project's own (pkg/kaos/sharing). It never fails: a
 	// peer that cannot be read is left out.
@@ -174,7 +181,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "a service-account token is required as bearer"})
 		return
 	}
-	if _, err := h.Verify(r.Context(), token, h.Namespaces); err != nil {
+	if err := h.authorize(r.Context(), token); err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "token not accepted for the catalog"})
 		return
 	}
@@ -191,6 +198,30 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		datasets = append(datasets, h.Shared(r.Context())...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"datasets": datasets})
+}
+
+// authorize admits a token of a namespace, else of a listed workload. It logs who was refused
+// and why, never the token.
+func (h Handler) authorize(ctx context.Context, token string) error {
+	var nsErr error
+	if len(h.Namespaces) > 0 && h.Verify != nil {
+		if _, nsErr = h.Verify(ctx, token, h.Namespaces); nsErr == nil {
+			return nil
+		}
+	}
+	if len(h.Workloads) > 0 && h.VerifyWorkload != nil {
+		_, err := h.VerifyWorkload(ctx, token, h.Workloads, h.Project)
+		if err == nil {
+			return nil
+		}
+		logging.FromContext(ctx).WithError(err).Warn("Catalog workload token refused")
+		return err
+	}
+	if nsErr == nil {
+		nsErr = errors.New("no verifier")
+	}
+	logging.FromContext(ctx).WithError(nsErr).Warn("Catalog token refused")
+	return nsErr
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

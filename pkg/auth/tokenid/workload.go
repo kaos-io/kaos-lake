@@ -104,6 +104,11 @@ func (w *Workload) Resolve(ctx context.Context, token string) (*model.User, erro
 
 // verify checks token's signature, issuer, audience and expiry. Every error denies.
 func (w *Workload) verify(ctx context.Context, token string) (jwt.MapClaims, error) {
+	return w.verifyAudience(ctx, token, w.cfg.Audience)
+}
+
+// verifyAudience is verify for a token that must name audience.
+func (w *Workload) verifyAudience(ctx context.Context, token, audience string) (jwt.MapClaims, error) {
 	claims := jwt.MapClaims{}
 	keyFn := func(t *jwt.Token) (any, error) {
 		kid, _ := t.Header["kid"].(string)
@@ -112,7 +117,7 @@ func (w *Workload) verify(ctx context.Context, token string) (jwt.MapClaims, err
 	_, err := jwt.ParseWithClaims(token, claims, keyFn,
 		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Name}),
 		jwt.WithIssuer(w.cfg.Issuer),
-		jwt.WithAudience(w.cfg.Audience),
+		jwt.WithAudience(audience),
 		jwt.WithExpirationRequired(),
 		jwt.WithTimeFunc(w.now),
 	)
@@ -135,6 +140,32 @@ func (w *Workload) Namespace(ctx context.Context, token string, namespaces []str
 		return "", fmt.Errorf("%w: %w: %s is not in a namespace of this project", auth.ErrAuthenticatingRequest, ErrDenied, sub)
 	}
 	return parts[2], nil
+}
+
+// ProjectAudience is the audience a catalog workload token of project must name.
+func (w *Workload) ProjectAudience(project string) string {
+	return w.cfg.Audience + ":" + project
+}
+
+// CatalogWorkload verifies token like Namespace, but for one service account: the token must name
+// audience <audience>:<project> (never the pool-wide audience) and its subject must be exactly
+// one of workloads, each "<namespace>/<serviceaccount>". It acts as no user, and is accepted
+// nowhere but the catalog: every other route verifies the pool-wide audience, which this token
+// does not carry. It returns "<namespace>/<serviceaccount>".
+func (w *Workload) CatalogWorkload(ctx context.Context, token string, workloads []string, project string) (string, error) {
+	if project == "" {
+		return "", fmt.Errorf("%w: %w: no project to bind the audience to", auth.ErrAuthenticatingRequest, ErrDenied)
+	}
+	claims, err := w.verifyAudience(ctx, token, w.ProjectAudience(project))
+	if err != nil {
+		return "", err
+	}
+	sub, _ := claims.GetSubject()
+	parts := strings.Split(sub, ":")
+	if len(parts) != 4 || parts[0] != "system" || parts[1] != "serviceaccount" || !slices.Contains(workloads, parts[2]+"/"+parts[3]) {
+		return "", fmt.Errorf("%w: %w: %s is not a catalog workload of this project", auth.ErrAuthenticatingRequest, ErrDenied, sub)
+	}
+	return parts[2] + "/" + parts[3], nil
 }
 
 // appUser maps subject system:serviceaccount:{namespace}:{app}-workflow to kaos-app-{app}, when
