@@ -242,3 +242,34 @@ func TestWorkload_CatalogWorkload(t *testing.T) {
 	_, err = w.Namespace(t.Context(), tok, []string{"vision-ml"})
 	require.ErrorIs(t, err, ErrDenied)
 }
+
+// A token naming both the pool-wide and the project audience, in either order, from a workloads
+// service account: the catalog accepts it; Resolve and Namespace refuse it because its account
+// is not in their namespaces. This holds only while the workload's namespace is not listed in
+// kaos.catalog.namespaces or kaos.meluxina.namespaces; a deployment must never list it.
+func TestWorkload_CatalogWorkload_BothAudiences(t *testing.T) {
+	is := newIssuer(t)
+	w, _ := newWorkload(t, is)
+	wls := []string{"kaos-system/osr-read-api"}
+	for _, aud := range [][]string{{workloadAudience, workloadAudience + ":p"}, {workloadAudience + ":p", workloadAudience}} {
+		tok := podToken(t, is, "kaos-system", "osr-read-api", func(c jwt.MapClaims) { c["aud"] = aud })
+		_, err := w.CatalogWorkload(t.Context(), tok, wls, "p")
+		require.NoError(t, err, aud)
+		_, err = w.Resolve(t.Context(), tok)
+		require.ErrorIs(t, err, ErrDenied, aud)
+		_, err = w.Namespace(t.Context(), tok, []string{"vision-ci", "vision-ml"})
+		require.ErrorIs(t, err, ErrDenied, aud)
+	}
+}
+
+// A token of a CI namespace with the project audience, from a service account that is not a
+// workload, gets nothing new: the catalog refuses it.
+func TestWorkload_CatalogWorkload_CINamespaceProjectAudience(t *testing.T) {
+	is := newIssuer(t)
+	w, _ := newWorkload(t, is)
+	tok := podToken(t, is, "vision-ci", "operate-workflow-sa", func(c jwt.MapClaims) { c["aud"] = []string{workloadAudience + ":p"} })
+	_, err := w.CatalogWorkload(t.Context(), tok, []string{"kaos-system/osr-read-api"}, "p")
+	require.ErrorIs(t, err, ErrDenied)
+	_, err = w.Namespace(t.Context(), tok, []string{"vision-ci"})
+	require.ErrorIs(t, err, ErrDenied, "the namespace path still needs the plain audience")
+}

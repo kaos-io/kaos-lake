@@ -130,7 +130,7 @@ func Serve(
 	if wl := tokenid.ActiveWorkload(); wl != nil {
 		r.Post("/kaos/v1/credentials", wl.Exchange)
 		cat := cfg.GetBaseConfig().KAOS.Catalog
-		if ns := cat.Namespaces; len(ns) > 0 || len(cat.Workloads) > 0 {
+		if ns := cat.Namespaces; datacatalog.Served(ns, cat.Workloads) {
 			h := datacatalog.Handler{Catalog: catalog, Verify: wl.Namespace, Namespaces: ns,
 				Cache: datacatalog.NewCache(datacatalog.CacheTTL)}
 			// Modified by KAOS: the pool's read API, one service account bound to this project's

@@ -150,6 +150,9 @@ func (w *Workload) ProjectAudience(project string) string {
 // CatalogWorkload verifies token like Namespace, but for one service account: the token must name
 // audience <audience>:<project> (never the pool-wide audience) and its subject must be exactly
 // one of workloads, each "<namespace>/<serviceaccount>". It acts as no user, and is accepted
+// nowhere but the catalog. A token that names both this audience and the pool-wide one passes
+// both checks, so a deployment must never list a workload's namespace in kaos.catalog.namespaces
+// or kaos.meluxina.namespaces: Namespace would then accept that token there. It is accepted
 // nowhere but the catalog: every other route verifies the pool-wide audience, which this token
 // does not carry. It returns "<namespace>/<serviceaccount>".
 func (w *Workload) CatalogWorkload(ctx context.Context, token string, workloads []string, project string) (string, error) {

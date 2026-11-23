@@ -155,3 +155,10 @@ func TestHandler_Workloads(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, code("Bearer ci-token"))
 	require.Equal(t, http.StatusOK, code("Bearer bound-token"))
 }
+
+// The route is registered when only workloads are set, and not when neither is.
+func TestServed(t *testing.T) {
+	require.True(t, datacatalog.Served(nil, []string{"kaos-system/osr-read-api"}))
+	require.True(t, datacatalog.Served([]string{"vision-ci"}, nil))
+	require.False(t, datacatalog.Served(nil, nil))
+}

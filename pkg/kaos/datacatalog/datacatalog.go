@@ -200,28 +200,33 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"datasets": datasets})
 }
 
-// authorize admits a token of a namespace, else of a listed workload. It logs who was refused
-// and why, never the token.
+// Served reports whether GET /kaos/v1/catalog is registered: when any namespace or workload may
+// read it.
+func Served(namespaces, workloads []string) bool {
+	return len(namespaces) > 0 || len(workloads) > 0
+}
+
+// authorize admits a token of a namespace, else of a listed workload. A refusal is logged at Debug
+// (it happens per request) with every error, which names the namespace and service account, never
+// the token.
 func (h Handler) authorize(ctx context.Context, token string) error {
-	var nsErr error
+	var nsErr, wlErr error
 	if len(h.Namespaces) > 0 && h.Verify != nil {
 		if _, nsErr = h.Verify(ctx, token, h.Namespaces); nsErr == nil {
 			return nil
 		}
 	}
 	if len(h.Workloads) > 0 && h.VerifyWorkload != nil {
-		_, err := h.VerifyWorkload(ctx, token, h.Workloads, h.Project)
-		if err == nil {
+		if _, wlErr = h.VerifyWorkload(ctx, token, h.Workloads, h.Project); wlErr == nil {
 			return nil
 		}
-		logging.FromContext(ctx).WithError(err).Warn("Catalog workload token refused")
-		return err
 	}
-	if nsErr == nil {
-		nsErr = errors.New("no verifier")
+	err := errors.Join(nsErr, wlErr)
+	if err == nil {
+		err = errors.New("no verifier")
 	}
-	logging.FromContext(ctx).WithError(nsErr).Warn("Catalog token refused")
-	return nsErr
+	logging.FromContext(ctx).WithError(err).Debug("Catalog token refused")
+	return err
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
